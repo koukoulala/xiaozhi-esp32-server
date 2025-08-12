@@ -598,6 +598,32 @@ TTS:
     output_dir: tmp/
     access_token: 你的硅基流动API密钥
     response_format: wav
+  CosyVoiceClone:
+    # CosyVoice 音色克隆 TTS
+    # 基于硅基流动的 CosyVoice API，支持音色克隆功能
+    # token申请地址 https://cloud.siliconflow.cn/account/ak
+    type: cosyvoice_clone
+    model: FunAudioLLM/CosyVoice2-0.5B
+    api_key: 你的硅基流动API密钥
+    api_url: https://api.siliconflow.cn/v1/audio/speech
+    output_dir: tmp/
+    response_format: wav
+    # 参考音频文件列表（支持多个参考音频）
+    reference_audio: ["config/assets/wakeup_words.wav"]
+    # 参考音频对应的文本（与参考音频一一对应）
+    reference_text: ["哈啰啊，我是小智啦，声音好听的台湾女孩一枚，超开心认识你耶，最近在忙啥，别忘了给我来点有趣的料哦，我超爱听八卦的啦"]
+    # TTS 生成参数
+    normalize: true
+    max_new_tokens: 1024
+    chunk_length: 200
+    top_p: 0.7
+    repetition_penalty: 1.2
+    temperature: 0.7
+    streaming: false
+    use_memory_cache: "on"
+    seed: null
+    channels: 1
+    rate: 44100
   CozeCnTTS:
     type: cozecn
     # COZECN TTS

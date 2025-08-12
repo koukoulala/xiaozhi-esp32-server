@@ -480,6 +480,27 @@ class AsyncPerformanceTester:
     async def run(self):
         """执行全量异步测试"""
         print("🔍 开始筛选可用模块...")
+        
+        # 添加调试信息
+        print(f"📊 配置调试信息:")
+        print(f"   LLM配置: {list(self.config.get('LLM', {}).keys()) if self.config.get('LLM') else 'None'}")
+        print(f"   TTS配置: {list(self.config.get('TTS', {}).keys()) if self.config.get('TTS') else 'None'}")
+        print(f"   ASR配置: {list(self.config.get('ASR', {}).keys()) if self.config.get('ASR') else 'None'}")
+        
+        # 如果有LLM配置，显示详细信息
+        if self.config.get("LLM"):
+            for llm_name, config in self.config.get("LLM", {}).items():
+                print(f"   LLM {llm_name} 配置:")
+                if "api_key" in config:
+                    api_key = config["api_key"]
+                    # 隐藏API密钥的大部分内容，只显示前后几位
+                    if len(api_key) > 10:
+                        masked_key = api_key[:4] + "***" + api_key[-4:]
+                    else:
+                        masked_key = "***"
+                    print(f"     api_key: {masked_key}")
+                else:
+                    print(f"     配置: {config}")
 
         # 创建所有测试任务
         all_tasks = []

@@ -54,6 +54,16 @@ def get_config_from_api(config):
     if config_data is None:
         raise Exception("Failed to fetch server config from API")
 
+    # 添加调试信息，查看从API获取到的原始数据
+    print(f"🔍 从API获取到的配置键: {list(config_data.keys())}")
+    
+    # 检查每个模块配置的存在情况
+    for module_type in ["LLM", "TTS", "ASR"]:
+        if module_type in config_data:
+            print(f"   {module_type}: {list(config_data[module_type].keys()) if isinstance(config_data[module_type], dict) else config_data[module_type]}")
+        else:
+            print(f"   {module_type}: 未找到")
+
     config_data["read_config_from_api"] = True
     config_data["manager-api"] = {
         "url": config["manager-api"].get("url", ""),

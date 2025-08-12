@@ -488,6 +488,8 @@
                     placeholder="WebSocket服务器地址，如：ws://127.0.0.1:8000/xiaozhi/v1/" />
                 <button id="connectButton">连接</button>
                 <button id="authTestButton">测试认证</button>
+                <button id="micTestButton">测试麦克风</button>
+                <button id="micTestButton">测试麦克风</button>
             </div>
         </div>
 
@@ -602,6 +604,8 @@
         let isPlaying = false;
         let opusDecoder = null; // Opus解码器
         let visualizationRequest = null; // 动画帧请求ID
+        let connectionRetryCount = 0;
+        const maxRetryAttempts = 3;
 
         // 音频流缓冲相关
         let audioBuffers = []; // 用于存储接收到的所有音频数据
@@ -1071,9 +1075,265 @@
             }
         }
 
+        // 测试麦克风功能
+        async function testMicrophone() {
+            log('=== 开始麦克风测试 ===', 'info');
+            
+            const micTestButton = document.getElementById('micTestButton');
+            if (!micTestButton) {
+                log('找不到测试麦克风按钮', 'error');
+                return;
+            }
+            
+            micTestButton.disabled = true;
+            micTestButton.textContent = '测试中...';
+            
+            try {
+                // 先进行兼容性检查
+                log('检查浏览器兼容性...', 'info');
+                
+                // 检查权限状态
+                if (navigator.permissions) {
+                    try {
+                        const permission = await navigator.permissions.query({name: 'microphone'});
+                        log(`麦克风权限状态: ${permission.state}`, 'info');
+                        if (permission.state === 'denied') {
+                            log('麦克风权限被拒绝，请在浏览器设置中允许麦克风访问', 'error');
+                        }
+                    } catch (permError) {
+                        log('无法查询权限状态', 'warning');
+                    }
+                }
+                
+                // 列出所有音频设备
+                log('正在列出所有音频设备...', 'info');
+                try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const audioInputs = devices.filter(device => device.kind === 'audioinput');
+                    const audioOutputs = devices.filter(device => device.kind === 'audiooutput');
+                    
+                    log(`发现音频输入设备 ${audioInputs.length} 个:`, 'info');
+                    audioInputs.forEach((device, index) => {
+                        log(`  ${index + 1}. ${device.label || '未知设备'} (ID: ${device.deviceId.substring(0, 12)}...)`, 'info');
+                    });
+                    
+                    log(`发现音频输出设备 ${audioOutputs.length} 个:`, 'info');
+                    audioOutputs.forEach((device, index) => {
+                        log(`  ${index + 1}. ${device.label || '未知设备'} (ID: ${device.deviceId.substring(0, 12)}...)`, 'info');
+                    });
+                    
+                    if (audioInputs.length === 0) {
+                        throw new Error('未发现任何音频输入设备，请检查耳机/麦克风连接');
+                    }
+                } catch (deviceError) {
+                    log(`设备枚举失败: ${deviceError.message}`, 'error');
+                    throw deviceError;
+                }
+                
+                log('正在请求麦克风权限...', 'info');
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        sampleRate: 16000,
+                        channelCount: 1
+                    }
+                });
+                
+                log('✓ 麦克风权限获取成功', 'success');
+                
+                // 获取音频轨道信息
+                const audioTracks = stream.getAudioTracks();
+                if (audioTracks.length > 0) {
+                    const track = audioTracks[0];
+                    const settings = track.getSettings();
+                    const capabilities = track.getCapabilities();
+                    
+                    log(`✓ 音频轨道信息:`, 'success');
+                    log(`  - 状态: ${track.readyState}`, 'info');
+                    log(`  - 标签: ${track.label}`, 'info');
+                    log(`  - 采样率: ${settings.sampleRate}Hz`, 'info');
+                    log(`  - 声道数: ${settings.channelCount}`, 'info');
+                    log(`  - 回声消除: ${settings.echoCancellation}`, 'info');
+                    log(`  - 噪声抑制: ${settings.noiseSuppression}`, 'info');
+                    
+                    if (capabilities) {
+                        log(`  - 支持的采样率范围: ${capabilities.sampleRate?.min || '未知'}-${capabilities.sampleRate?.max || '未知'}Hz`, 'info');
+                        log(`  - 支持的声道数: ${capabilities.channelCount?.min || '未知'}-${capabilities.channelCount?.max || '未知'}`, 'info');
+                    }
+                }
+                
+                // 测试MediaRecorder
+                log('正在测试MediaRecorder...', 'info');
+                try {
+                    const recorder = new MediaRecorder(stream, {
+                        mimeType: 'audio/webm;codecs=opus'
+                    });
+                    log(`✓ MediaRecorder创建成功，MIME类型: ${recorder.mimeType}`, 'success');
+                } catch (e) {
+                    log(`⚠ MediaRecorder (Opus) 创建失败: ${e.message}`, 'warning');
+                    try {
+                        const recorder = new MediaRecorder(stream);
+                        log(`✓ MediaRecorder (默认) 创建成功，MIME类型: ${recorder.mimeType}`, 'success');
+                    } catch (e2) {
+                        log(`✗ MediaRecorder 创建失败: ${e2.message}`, 'error');
+                    }
+                }
+                
+                // 测试音频上下文
+                log('正在测试AudioContext...', 'info');
+                try {
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: 16000
+                    });
+                    
+                    const source = audioContext.createMediaStreamSource(stream);
+                    const analyser = audioContext.createAnalyser();
+                    source.connect(analyser);
+                    
+                    log(`✓ AudioContext创建成功，采样率: ${audioContext.sampleRate}Hz，状态: ${audioContext.state}`, 'success');
+                    
+                    // 简单的音频电平测试
+                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    let maxLevel = 0;
+                    let samples = 0;
+                    
+                    log('正在进行5秒音频电平测试，请对着麦克风说话...', 'info');
+                    
+                    const levelTest = setInterval(() => {
+                        analyser.getByteFrequencyData(dataArray);
+                        const level = Math.max(...dataArray);
+                        maxLevel = Math.max(maxLevel, level);
+                        samples++;
+                        
+                        if (samples % 10 === 0) { // 每秒更新一次
+                            log(`  当前音频电平: ${level}/255, 最大电平: ${maxLevel}/255`, 'info');
+                        }
+                    }, 100);
+                    
+                    setTimeout(() => {
+                        clearInterval(levelTest);
+                        audioContext.close();
+                        
+                        if (maxLevel > 10) {
+                            log(`✓ 音频电平测试通过，最大电平: ${maxLevel}/255`, 'success');
+                        } else {
+                            log(`⚠ 音频电平测试警告，最大电平: ${maxLevel}/255，可能麦克风音量过低或未检测到声音`, 'warning');
+                        }
+                        
+                        log('=== 麦克风测试完成 ===', 'success');
+                    }, 5000);
+                    
+                } catch (e) {
+                    log(`✗ AudioContext创建失败: ${e.message}`, 'error');
+                }
+                
+                // 关闭流
+                setTimeout(() => {
+                    stream.getTracks().forEach(track => track.stop());
+                    log('已释放麦克风资源', 'info');
+                }, 6000);
+                
+            } catch (error) {
+                log(`✗ 麦克风测试失败: ${error.message}`, 'error');
+                
+                if (error.name === 'NotAllowedError') {
+                    log('请点击浏览器地址栏的麦克风图标，允许麦克风访问权限', 'info');
+                } else if (error.name === 'NotFoundError') {
+                    log('未找到麦克风设备，请确保已连接麦克风', 'info');
+                } else if (error.name === 'NotReadableError') {
+                    log('麦克风被其他应用占用，请关闭其他使用麦克风的程序', 'info');
+                }
+            } finally {
+                setTimeout(() => {
+                    micTestButton.disabled = false;
+                    micTestButton.textContent = '测试麦克风';
+                }, 6000);
+            }
+        }
+
+        // 检查浏览器兼容性
+        function checkBrowserCompatibility() {
+            log('=== 浏览器兼容性检查 ===', 'info');
+            
+            // 检查基本API支持
+            const features = {
+                'WebSocket': typeof WebSocket !== 'undefined',
+                'getUserMedia': navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function',
+                'MediaRecorder': typeof MediaRecorder !== 'undefined',
+                'AudioContext': typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined',
+                'WebAssembly': typeof WebAssembly !== 'undefined'
+            };
+            
+            let allSupported = true;
+            for (const [feature, supported] of Object.entries(features)) {
+                if (supported) {
+                    log(`✓ ${feature}: 支持`, 'success');
+                } else {
+                    log(`✗ ${feature}: 不支持`, 'error');
+                    allSupported = false;
+                }
+            }
+            
+            // 检查MediaRecorder编码支持
+            if (typeof MediaRecorder !== 'undefined') {
+                const codecs = [
+                    'audio/webm;codecs=opus',
+                    'audio/webm',
+                    'audio/ogg;codecs=opus',
+                    'audio/mp4',
+                    'audio/mpeg'
+                ];
+                
+                log('MediaRecorder编码支持:', 'info');
+                for (const codec of codecs) {
+                    if (MediaRecorder.isTypeSupported(codec)) {
+                        log(`✓ ${codec}: 支持`, 'success');
+                    } else {
+                        log(`✗ ${codec}: 不支持`, 'warning');
+                    }
+                }
+            }
+            
+            // 浏览器信息
+            log(`浏览器: ${navigator.userAgent}`, 'info');
+            log(`协议: ${location.protocol}`, 'info');
+            
+            if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+                log('警告：非HTTPS环境可能导致麦克风访问被阻止', 'warning');
+            }
+            
+            return allSupported;
+        }
+
         // 初始化音频录制和处理
         async function initAudio() {
             try {
+                log('开始初始化音频系统...', 'info');
+                
+                // 检查浏览器是否支持必要的API
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('浏览器不支持麦克风访问API (navigator.mediaDevices.getUserMedia)');
+                }
+                
+                log('浏览器支持检查通过，正在请求麦克风权限...', 'info');
+                
+                // 首先列出可用的音频输入设备
+                try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const audioInputs = devices.filter(device => device.kind === 'audioinput');
+                    log(`发现 ${audioInputs.length} 个音频输入设备:`, 'info');
+                    audioInputs.forEach((device, index) => {
+                        log(`  ${index + 1}. ${device.label || '未知设备'} (${device.deviceId.substring(0, 8)}...)`, 'info');
+                    });
+                    
+                    if (audioInputs.length === 0) {
+                        throw new Error('未发现任何音频输入设备');
+                    }
+                } catch (deviceError) {
+                    log(`设备枚举失败: ${deviceError.message}，继续尝试默认设备`, 'warning');
+                }
+                
                 // 请求麦克风权限
                 const stream = await navigator.mediaDevices.getUserMedia({
                     audio: {
@@ -1086,11 +1346,21 @@
                 log('已获取麦克风访问权限', 'success');
 
                 // 创建音频上下文
+                log('正在创建音频上下文...', 'info');
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({
                     sampleRate: 16000,  // 确保采样率与服务器期望的一致
                     latencyHint: 'interactive'
                 });
+                
+                if (audioContext.state === 'suspended') {
+                    log('音频上下文被暂停，尝试激活...', 'info');
+                    await audioContext.resume();
+                }
+                
+                log(`音频上下文创建成功，状态: ${audioContext.state}, 采样率: ${audioContext.sampleRate}Hz`, 'success');
+                
                 const source = audioContext.createMediaStreamSource(stream);
+                log('媒体流源创建成功', 'success');
 
                 // 获取实际音频轨道设置
                 const audioTracks = stream.getAudioTracks();
@@ -1098,47 +1368,65 @@
                     const track = audioTracks[0];
                     const settings = track.getSettings();
                     log(`实际麦克风设置 - 采样率: ${settings.sampleRate || '未知'}Hz, 声道数: ${settings.channelCount || '未知'}`, 'info');
+                    
+                    // 检查麦克风状态
+                    if (track.readyState !== 'live') {
+                        log(`警告：麦克风状态异常: ${track.readyState}`, 'warning');
+                    }
+                } else {
+                    throw new Error('无法获取音频轨道信息');
                 }
 
                 // 创建分析器用于可视化
+                log('正在创建音频分析器...', 'info');
                 analyser = audioContext.createAnalyser();
                 analyser.fftSize = 2048;
                 source.connect(analyser);
+                log('音频分析器创建成功', 'success');
 
                 // 尝试初始化MediaRecorder，按优先级尝试不同编码选项
+                log('正在初始化MediaRecorder...', 'info');
                 try {
-                    // 优先尝试使用Opus编码
-                    mediaRecorder = new MediaRecorder(stream, {
-                        mimeType: 'audio/webm;codecs=opus',
-                        audioBitsPerSecond: 16000
-                    });
-                    log('已初始化MediaRecorder (使用Opus编码)', 'success');
-                    log(`选择的编码格式: ${mediaRecorder.mimeType}`, 'info');
-                } catch (e1) {
-                    try {
-                        // 如果Opus不支持，尝试MP3
+                    // 检查是否支持Opus编码
+                    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
                         mediaRecorder = new MediaRecorder(stream, {
-                            mimeType: 'audio/webm',
+                            mimeType: 'audio/webm;codecs=opus',
                             audioBitsPerSecond: 16000
                         });
-                        log('已初始化MediaRecorder (使用WebM标准编码，Opus不支持)', 'warning');
+                        log('已初始化MediaRecorder (使用Opus编码)', 'success');
                         log(`选择的编码格式: ${mediaRecorder.mimeType}`, 'info');
-                    } catch (e2) {
-                        try {
-                            // 尝试其他备选格式
+                    } else {
+                        log('浏览器不支持Opus编码，尝试其他格式...', 'warning');
+                        throw new Error('Opus不支持');
+                    }
+                } catch (e1) {
+                    log(`Opus编码失败: ${e1.message}`, 'warning');
+                    try {
+                        // 如果Opus不支持，尝试WebM
+                        if (MediaRecorder.isTypeSupported('audio/webm')) {
                             mediaRecorder = new MediaRecorder(stream, {
-                                mimeType: 'audio/ogg;codecs=opus',
+                                mimeType: 'audio/webm',
                                 audioBitsPerSecond: 16000
                             });
-                            log('已初始化MediaRecorder (使用OGG+Opus编码)', 'warning');
+                            log('已初始化MediaRecorder (使用WebM编码)', 'warning');
+                            log(`选择的编码格式: ${mediaRecorder.mimeType}`, 'info');
+                        } else {
+                            throw new Error('WebM不支持');
+                        }
+                    } catch (e2) {
+                        log(`WebM编码失败: ${e2.message}`, 'warning');
+                        try {
+                            // 最后尝试默认格式
+                            mediaRecorder = new MediaRecorder(stream);
+                            log('已初始化MediaRecorder (使用默认编码)', 'warning');
                             log(`选择的编码格式: ${mediaRecorder.mimeType}`, 'info');
                         } catch (e3) {
-                            // 最后使用默认编码
-                            mediaRecorder = new MediaRecorder(stream);
-                            log(`已初始化MediaRecorder (使用默认编码: ${mediaRecorder.mimeType})`, 'warning');
+                            throw new Error(`所有MediaRecorder编码格式都不支持: ${e3.message}`);
                         }
                     }
                 }
+
+                log('MediaRecorder初始化成功', 'success');
 
                 // 处理录制的数据
                 mediaRecorder.ondataavailable = (event) => {
@@ -1254,6 +1542,64 @@
                 return true;
             } catch (error) {
                 log(`音频初始化错误: ${error.message}`, 'error');
+                
+                // 提供具体的错误分析和解决建议
+                if (error.name === 'NotAllowedError' || error.message.includes('Permission denied')) {
+                    log('错误原因：麦克风权限被拒绝', 'error');
+                    log('解决方案：', 'info');
+                    log('1. 点击浏览器地址栏左侧的🔒或🔊图标，允许麦克风权限', 'info');
+                    log('2. 在Chrome中：设置 → 隐私和安全 → 网站设置 → 麦克风 → 允许', 'info');
+                    log('3. 确保系统设置中允许浏览器访问麦克风', 'info');
+                    log('4. 刷新页面重试', 'info');
+                } else if (error.name === 'NotFoundError') {
+                    log('错误原因：未找到麦克风设备', 'error');
+                    log('解决方案：', 'info');
+                    log('1. 确保耳机已正确连接到电脑', 'info');
+                    log('2. 检查耳机是否有麦克风功能', 'info');
+                    log('3. 在系统声音设置中检查麦克风是否被识别', 'info');
+                    log('4. 尝试重新插拔耳机', 'info');
+                    log('5. 重启浏览器重试', 'info');
+                } else if (error.name === 'NotReadableError') {
+                    log('错误原因：麦克风设备正在被其他应用使用', 'error');
+                    log('解决方案：', 'info');
+                    log('1. 关闭其他正在使用麦克风的应用（如Zoom、Teams等）', 'info');
+                    log('2. 关闭其他浏览器标签页', 'info');
+                    log('3. 重启浏览器重试', 'info');
+                } else if (error.name === 'OverconstrainedError') {
+                    log('错误原因：麦克风不支持请求的音频参数', 'error');
+                    log('解决方案：', 'info');
+                    log('1. 您的麦克风可能不支持16kHz采样率', 'info');
+                    log('2. 尝试使用更新版本的浏览器', 'info');
+                    log('3. 检查耳机规格是否支持高质量音频录制', 'info');
+                } else if (error.message.includes('AudioContext')) {
+                    log('错误原因：音频上下文创建失败', 'error');
+                    log('解决方案：', 'info');
+                    log('1. 确保浏览器支持Web Audio API', 'info');
+                    log('2. 尝试用户手动点击页面激活音频上下文', 'info');
+                    log('3. 检查是否有其他音频应用冲突', 'info');
+                } else if (error.message.includes('MediaRecorder')) {
+                    log('错误原因：MediaRecorder初始化失败', 'error');
+                    log('解决方案：', 'info');
+                    log('1. 确保浏览器支持MediaRecorder API', 'info');
+                    log('2. 尝试使用Chrome或Firefox浏览器', 'info');
+                    log('3. 更新浏览器到最新版本', 'info');
+                } else if (error.message.includes('设备')) {
+                    log('错误原因：音频设备相关问题', 'error');
+                    log('解决方案：', 'info');
+                    log('1. 检查耳机是否正确连接', 'info');
+                    log('2. 在系统设置中检查默认音频设备', 'info');
+                    log('3. 尝试重新插拔耳机', 'info');
+                    log('4. 重启电脑后重试', 'info');
+                } else {
+                    log('其他音频初始化错误，错误详情如上', 'warning');
+                    log('通用解决方案：', 'info');
+                    log('1. 确保使用HTTPS或localhost访问页面', 'info');
+                    log('2. 尝试使用Chrome或Firefox浏览器', 'info');
+                    log('3. 刷新页面重试', 'info');
+                    log('4. 检查浏览器控制台是否有其他错误信息', 'info');
+                    log('5. 尝试点击"测试麦克风"按钮单独测试', 'info');
+                }
+                
                 return false;
             }
         }
@@ -1311,6 +1657,21 @@
                 if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
                     log('URL格式错误，必须以ws://或wss://开头', 'error');
                     return;
+                }
+
+                // 预检测：尝试通过HTTP检查服务器是否可达
+                log('正在预检测服务器连通性...', 'info');
+                const httpUrl = url.replace('ws://', 'http://').replace('wss://', 'https://');
+                try {
+                    const testResponse = await fetch(httpUrl, { 
+                        method: 'GET',
+                        mode: 'cors',
+                        cache: 'no-cache'
+                    });
+                    log(`HTTP预检测结果: ${testResponse.status}`, 'debug');
+                } catch (preTestError) {
+                    log(`HTTP预检测失败: ${preTestError.message}`, 'warning');
+                    log('这可能意味着服务器不可达或端口被阻止', 'warning');
                 }
 
                 // 先检查OTA状态
@@ -1392,14 +1753,54 @@
                 connUrl.searchParams.append('device-id', config.deviceId);
                 connUrl.searchParams.append('client-id', config.clientId);
 
-                log(`正在连接: ${connUrl.toString()}`, 'info');
-                websocket = new WebSocket(connUrl.toString());
+                log(`正在连接到WebSocket...`, 'info');
+                log(`完整URL: ${connUrl.toString()}`, 'debug');
+                log(`设备MAC: ${config.deviceMac}`, 'debug');
+                log(`设备ID: ${config.deviceId}`, 'debug');
+                log(`客户端ID: ${config.clientId}`, 'debug');
+                log(`Token: ${config.token}`, 'debug');
+                
+                // 尝试创建WebSocket连接，添加协议和子协议支持
+                try {
+                    // 先尝试标准WebSocket连接
+                    websocket = new WebSocket(connUrl.toString());
+                    log(`使用标准WebSocket协议连接`, 'debug');
+                } catch (protocolError) {
+                    log(`标准WebSocket连接失败: ${protocolError.message}`, 'warning');
+                    // 如果标准连接失败，尝试指定子协议
+                    try {
+                        websocket = new WebSocket(connUrl.toString(), ['websocket']);
+                        log(`使用指定子协议连接`, 'debug');
+                    } catch (subProtocolError) {
+                        log(`子协议连接也失败: ${subProtocolError.message}`, 'error');
+                        throw subProtocolError;
+                    }
+                }
 
                 // 设置接收二进制数据的类型为ArrayBuffer
                 websocket.binaryType = 'arraybuffer';
 
+                // 设置连接超时
+                const connectionTimeout = setTimeout(() => {
+                    if (websocket && websocket.readyState === WebSocket.CONNECTING) {
+                        log('WebSocket连接超时 (10秒)，正在关闭连接...', 'error');
+                        websocket.close();
+                        connectionStatus.textContent = 'ws连接超时';
+                        connectionStatus.style.color = 'red';
+                    }
+                }, 10000); // 10秒超时
+
                 websocket.onopen = async () => {
-                    log(`已连接到服务器: ${url}`, 'success');
+                    clearTimeout(connectionTimeout); // 清除超时定时器
+                    connectionRetryCount = 0; // 重置重试计数器
+                    log(`WebSocket连接成功建立!`, 'success');
+                    log(`连接详情: ${JSON.stringify({
+                        readyState: websocket.readyState,
+                        url: websocket.url,
+                        protocol: websocket.protocol,
+                        extensions: websocket.extensions
+                    })}`, 'debug');
+                    
                     connectionStatus.textContent = 'ws已连接';
                     connectionStatus.style.color = 'green';
 
@@ -1419,8 +1820,67 @@
                     }
                 };
 
-                websocket.onclose = () => {
-                    log('已断开连接', 'info');
+                websocket.onclose = (event) => {
+                    clearTimeout(connectionTimeout); // 清除超时定时器
+                    log('WebSocket连接已关闭', 'warning');
+                    log(`关闭事件详情: ${JSON.stringify({
+                        code: event.code,
+                        reason: event.reason,
+                        wasClean: event.wasClean,
+                        type: event.type
+                    })}`, 'debug');
+                    
+                    // 解析关闭代码
+                    let closeReason = '未知原因';
+                    switch(event.code) {
+                        case 1000: closeReason = '正常关闭'; break;
+                        case 1001: closeReason = '端点离开'; break;
+                        case 1002: closeReason = '协议错误'; break;
+                        case 1003: closeReason = '不支持的数据类型'; break;
+                        case 1004: closeReason = '保留代码'; break;
+                        case 1005: closeReason = '未提供状态码'; break;
+                        case 1006: closeReason = '连接异常关闭(可能是网络问题或服务器拒绝连接)'; break;
+                        case 1007: closeReason = '数据格式错误'; break;
+                        case 1008: closeReason = '策略违规'; break;
+                        case 1009: closeReason = '消息过大'; break;
+                        case 1010: closeReason = '扩展协商失败'; break;
+                        case 1011: closeReason = '服务器错误'; break;
+                        case 1012: closeReason = '服务重启'; break;
+                        case 1013: closeReason = '稍后重试'; break;
+                        case 1014: closeReason = '网关超时'; break;
+                        case 1015: closeReason = 'TLS握手失败'; break;
+                        default: closeReason = `自定义代码: ${event.code}`;
+                    }
+                    
+                    log(`关闭原因: ${closeReason} (代码: ${event.code})`, 'warning');
+                    if (event.reason) {
+                        log(`服务器消息: ${event.reason}`, 'warning');
+                    }
+
+                    // 检查是否是由于HEAD请求导致的立即关闭
+                    if (event.code === 1006 && !event.wasClean) {
+                        log('检测到异常关闭，可能是服务器拒绝了非GET请求', 'error');
+                        log('服务器日志可能显示: "unsupported HTTP method; expected GET; got HEAD"', 'error');
+                        log('建议尝试：', 'info');
+                        log('1. 刷新页面重试', 'info');
+                        log('2. 使用不同的浏览器', 'info');
+                        log('3. 检查是否有网络代理干扰', 'info');
+                        
+                        // 尝试自动重试
+                        if (connectionRetryCount < maxRetryAttempts) {
+                            connectionRetryCount++;
+                            log(`准备进行第${connectionRetryCount}次重试连接...`, 'info');
+                            setTimeout(() => {
+                                log(`开始第${connectionRetryCount}次重试`, 'info');
+                                connectToServer();
+                            }, 2000 * connectionRetryCount); // 递增延迟重试
+                            return;
+                        } else {
+                            log(`已达到最大重试次数(${maxRetryAttempts})，停止重试`, 'error');
+                            connectionRetryCount = 0; // 重置重试计数
+                        }
+                    }
+
                     connectionStatus.textContent = 'ws已断开';
                     connectionStatus.style.color = 'red';
 
@@ -1435,8 +1895,36 @@
                 };
 
                 websocket.onerror = (error) => {
-                    log(`WebSocket错误: ${error.message || '未知错误'}`, 'error');
-                    connectionStatus.textContent = 'ws未连接';
+                    clearTimeout(connectionTimeout); // 清除超时定时器
+                    log(`WebSocket错误发生`, 'error');
+                    log(`错误事件详情: ${JSON.stringify({
+                        type: error.type,
+                        target: error.target ? {
+                            readyState: error.target.readyState,
+                            url: error.target.url,
+                            protocol: error.target.protocol
+                        } : null,
+                        timeStamp: error.timeStamp,
+                        message: error.message || '无错误消息'
+                    })}`, 'debug');
+                    
+                    // 尝试获取更多错误信息
+                    if (error.target) {
+                        const readyStateNames = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
+                        log(`连接状态: ${error.target.readyState} (${readyStateNames[error.target.readyState] || 'UNKNOWN'})`, 'debug');
+                        if (error.target.url) {
+                            log(`尝试连接的URL: ${error.target.url}`, 'debug');
+                        }
+                    }
+                    
+                    // 检查是否是HEAD请求问题
+                    if (error.target && error.target.readyState === WebSocket.CLOSED) {
+                        log('检测到连接立即关闭，可能是服务器拒绝了非GET请求', 'warning');
+                        log('建议检查服务器日志中是否有"unsupported HTTP method"错误', 'warning');
+                        log('这通常是由于网络代理或浏览器发送了HEAD请求而不是GET请求', 'warning');
+                    }
+                    
+                    connectionStatus.textContent = 'ws连接错误';
                     connectionStatus.style.color = 'red';
                 };
 
@@ -1522,8 +2010,41 @@
                 connectionStatus.textContent = 'ws未连接';
                 connectionStatus.style.color = 'orange';
             } catch (error) {
-                log(`连接错误: ${error.message}`, 'error');
-                connectionStatus.textContent = 'ws未连接';
+                log(`连接过程中发生异常: ${error.name}: ${error.message}`, 'error');
+                log(`错误堆栈: ${error.stack}`, 'debug');
+                log(`错误类型: ${typeof error}`, 'debug');
+                
+                // 检查是否是网络相关错误
+                if (error.name === 'NetworkError' || error.message.includes('network')) {
+                    log('这是网络连接错误，请检查：', 'error');
+                    log('1. 服务器IP地址是否正确', 'error');
+                    log('2. 服务器端口是否开放', 'error');
+                    log('3. 防火墙是否阻止了连接', 'error');
+                    log('4. 网络是否正常', 'error');
+                } else if (error.message.includes('ECONNREFUSED')) {
+                    log('连接被拒绝，服务器可能未启动或端口不正确', 'error');
+                } else if (error.message.includes('timeout')) {
+                    log('连接超时，服务器响应缓慢或不可达', 'error');
+                }
+                
+                // 针对HEAD请求问题的特殊处理
+                log('=== 常见问题解决方案 ===', 'info');
+                log('如果服务器日志显示"unsupported HTTP method; expected GET; got HEAD"：', 'info');
+                log('1. 这是浏览器或网络代理发送了HEAD请求而不是GET请求', 'info');
+                log('2. 解决方案：', 'info');
+                log('   - 尝试刷新页面重新连接', 'info');
+                log('   - 使用Chrome隐私模式或Firefox隐私窗口', 'info');
+                log('   - 检查是否有企业代理或VPN干扰', 'info');
+                log('   - 确保访问的是正确的服务器IP和端口', 'info');
+                log('3. 当前尝试连接的地址：' + url, 'info');
+                
+                connectionStatus.textContent = 'ws连接失败';
+                connectionStatus.style.color = 'red';
+                
+                // 重置按钮状态
+                connectButton.textContent = '连接';
+                connectButton.removeEventListener('click', disconnectFromServer);
+                connectButton.addEventListener('click', connectToServer);
             }
         }
 
@@ -1634,6 +2155,7 @@
         function initEventListeners() {
             connectButton.addEventListener('click', connectToServer);
             document.getElementById('authTestButton').addEventListener('click', testAuthentication);
+            document.getElementById('micTestButton').addEventListener('click', testMicrophone);
 
             // 设备配置面板折叠/展开
             const toggleButton = document.getElementById('toggleConfig');
@@ -2472,6 +2994,14 @@
         }
 
         initApp();
+        
+        // 页面加载完成后运行兼容性检查
+        document.addEventListener('DOMContentLoaded', function() {
+            // 延迟一点时间确保页面完全加载
+            setTimeout(() => {
+                checkBrowserCompatibility();
+            }, 1000);
+        });
     </script>
 </body>
 
