@@ -29,11 +29,25 @@ except ImportError:
 
 
 def audio_to_bytes(audio_path):
-    """Convert audio file to bytes"""
+    """Convert audio file to bytes, supports both file paths and file IDs"""
     try:
+        # 首先尝试从音频管理器根据文件ID获取
+        if isinstance(audio_path, str):
+            try:
+                from core.audio_manager import audio_manager
+                actual_path = audio_manager.get_audio_file_path(audio_path)
+                if actual_path and os.path.exists(actual_path):
+                    with open(actual_path, 'rb') as f:
+                        return f.read()
+            except Exception as e:
+                logger.bind(tag=TAG).debug(f"Not a valid file ID or file not found: {audio_path}")
+        
+        # 尝试作为文件路径处理
         if isinstance(audio_path, (str, Path)) and os.path.exists(audio_path):
             with open(audio_path, 'rb') as f:
                 return f.read()
+        
+        logger.bind(tag=TAG).warning(f"Audio file not found: {audio_path}")
         return b""
     except Exception as e:
         logger.bind(tag=TAG).error(f"Failed to read audio file {audio_path}: {e}")
@@ -41,13 +55,24 @@ def audio_to_bytes(audio_path):
 
 
 def read_ref_text(text_path):
-    """Read reference text from file or return as string"""
+    """Read reference text from file, file ID, or return as string"""
     try:
         if isinstance(text_path, str):
+            # 首先尝试从音频管理器根据文件ID获取参考文本
+            try:
+                from core.audio_manager import audio_manager
+                file_info = audio_manager.get_audio_file(text_path)
+                if file_info and file_info.get("reference_text"):
+                    return file_info["reference_text"].strip()
+            except Exception as e:
+                logger.bind(tag=TAG).debug(f"Not a valid file ID: {text_path}")
+            
+            # 尝试作为文件路径
             if os.path.exists(text_path):
                 with open(text_path, 'r', encoding='utf-8') as f:
                     return f.read().strip()
             else:
+                # 作为普通字符串返回
                 return text_path.strip()
         return str(text_path).strip()
     except Exception as e:
@@ -126,6 +151,22 @@ class TTSProvider(TTSProviderBase):
         ref_audio = config.get("reference_audio", ["config/assets/wakeup_words.wav"])
         ref_text = config.get("reference_text", ["哈啰啊，我是小智啦"])
         
+        # 检查是否使用音频管理器
+        use_audio_manager = config.get("use_audio_manager", True)  # 默认启用音频管理器
+        if use_audio_manager:
+            # 从音频管理器获取参考文件
+            try:
+                from core.audio_manager import audio_manager
+                audio_paths, reference_texts = audio_manager.get_reference_files_for_config()
+                if audio_paths and reference_texts:
+                    ref_audio = audio_paths
+                    ref_text = reference_texts
+                    logger.bind(tag=TAG).info(f"从音频管理器加载了 {len(audio_paths)} 个参考文件")
+                else:
+                    logger.bind(tag=TAG).warning("音频管理器中没有找到参考文件，使用默认配置")
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"从音频管理器加载参考文件失败: {e}")
+        
         # Handle both string and list inputs
         self.reference_audio = [ref_audio] if isinstance(ref_audio, str) else ref_audio
         self.reference_text = [ref_text] if isinstance(ref_text, str) else ref_text
@@ -190,8 +231,8 @@ class TTSProvider(TTSProviderBase):
                 "voice": "",  # Empty for voice cloning
                 "input": text,
                 "response_format": self.response_format,
+                "references": references,  # Move references to root level
                 "extra_body": {
-                    "references": references,
                     "normalize": self.normalize,
                     "max_new_tokens": self.max_new_tokens,
                     "chunk_length": self.chunk_length,

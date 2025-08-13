@@ -5,6 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>小智服务器测试页面</title>
+    
+    <!-- 添加favicon，使用base64编码的简单图标避免404错误 -->
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==">
+    
     <style>
         body {
             font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
@@ -431,12 +435,65 @@
             color: #333;
             font-weight: 500;
         }
+
+        /* 环境警告横幅 */
+        .environment-warning {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+            color: white;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            border-left: 5px solid #c92a2a;
+            box-shadow: 0 2px 10px rgba(255, 107, 107, 0.3);
+            display: none; /* 默认隐藏，JavaScript控制显示 */
+        }
+
+        .environment-warning h3 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .environment-warning p {
+            margin: 5px 0;
+            line-height: 1.5;
+        }
+
+        .environment-warning strong {
+            color: #ffe066;
+        }
+
+        .environment-warning .solutions {
+            margin-top: 15px;
+            padding-left: 20px;
+        }
+
+        .environment-warning .solutions li {
+            margin: 8px 0;
+        }
     </style>
 </head>
 
 <body>
     <div class="container">
         <h1>小智服务器测试页面</h1>
+
+        <!-- 环境警告横幅 -->
+        <div id="environmentWarning" class="environment-warning">
+            <h3>🚨 重要提示：麦克风功能不可用</h3>
+            <p><strong>当前环境不支持麦克风和摄像头访问</strong></p>
+            <p>Chrome/Edge浏览器要求HTTPS环境或localhost才能使用麦克风功能</p>
+            <p>当前访问地址：<strong id="currentUrl"></strong></p>
+            
+            <div class="solutions">
+                <p><strong>解决方案：</strong></p>
+                <ul>
+                    <li><strong>方案1（推荐）</strong>：配置HTTPS证书，使用 https:// 访问</li>
+                    <li><strong>方案2</strong>：将服务器绑定到localhost，使用 localhost:端口 访问</li>
+                    <li><strong>方案3（临时）</strong>：Chrome地址栏输入 chrome://flags/#unsafely-treat-insecure-origin-as-secure，添加当前域名</li>
+                </ul>
+            </div>
+        </div>
 
         <div id="scriptStatus" style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);">
             正在加载Opus库...</div>
@@ -488,7 +545,6 @@
                     placeholder="WebSocket服务器地址，如：ws://127.0.0.1:8000/xiaozhi/v1/" />
                 <button id="connectButton">连接</button>
                 <button id="authTestButton">测试认证</button>
-                <button id="micTestButton">测试麦克风</button>
                 <button id="micTestButton">测试麦克风</button>
             </div>
         </div>
@@ -1089,6 +1145,23 @@
             micTestButton.textContent = '测试中...';
             
             try {
+                // 首先检查安全环境
+                const isSecureContext = location.protocol === 'https:' || 
+                                      location.hostname === 'localhost' || 
+                                      location.hostname === '127.0.0.1' ||
+                                      location.hostname === '::1';
+                
+                if (!isSecureContext) {
+                    log('🚨 麦克风测试失败：不安全的环境', 'error');
+                    log('Chrome浏览器要求HTTPS环境或localhost才能使用麦克风', 'error');
+                    log('当前访问地址：' + location.href, 'info');
+                    log('', 'info');
+                    log('解决方案：', 'info');
+                    log('1. 使用HTTPS访问此页面', 'info');
+                    log('2. 或者将服务器绑定到localhost并通过localhost访问', 'info');
+                    throw new Error('不安全的环境，无法访问麦克风');
+                }
+                
                 // 先进行兼容性检查
                 log('检查浏览器兼容性...', 'info');
                 
@@ -1099,9 +1172,17 @@
                         log(`麦克风权限状态: ${permission.state}`, 'info');
                         if (permission.state === 'denied') {
                             log('麦克风权限被拒绝，请在浏览器设置中允许麦克风访问', 'error');
+                            throw new Error('麦克风权限被拒绝');
+                        } else if (permission.state === 'prompt') {
+                            log('即将请求麦克风权限...', 'info');
+                        } else if (permission.state === 'granted') {
+                            log('麦克风权限已授予', 'success');
                         }
                     } catch (permError) {
-                        log('无法查询权限状态', 'warning');
+                        if (permError.message === '麦克风权限被拒绝') {
+                            throw permError;
+                        }
+                        log('无法查询权限状态: ' + permError.message, 'warning');
                     }
                 }
                 
@@ -1131,6 +1212,8 @@
                 }
                 
                 log('正在请求麦克风权限...', 'info');
+                log('📢 浏览器将弹出权限请求对话框，请点击"允许"以继续测试', 'info');
+                
                 const stream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         echoCancellation: true,
@@ -1238,17 +1321,41 @@
                 log(`✗ 麦克风测试失败: ${error.message}`, 'error');
                 
                 if (error.name === 'NotAllowedError') {
-                    log('请点击浏览器地址栏的麦克风图标，允许麦克风访问权限', 'info');
+                    log('🚫 您拒绝了麦克风权限，或浏览器阻止了麦克风访问', 'error');
+                    log('💡 解决方法：', 'info');
+                    log('   1. 点击浏览器地址栏左侧的小锁图标', 'info');
+                    log('   2. 将麦克风权限设置为"允许"', 'info');
+                    log('   3. 刷新页面并重新测试', 'info');
                 } else if (error.name === 'NotFoundError') {
-                    log('未找到麦克风设备，请确保已连接麦克风', 'info');
+                    log('🎤 未找到麦克风设备', 'error');
+                    log('💡 请检查：', 'info');
+                    log('   1. 麦克风设备是否正确连接', 'info');
+                    log('   2. 系统音频设置中是否启用了麦克风', 'info');
+                    log('   3. 其他应用是否能正常使用麦克风', 'info');
                 } else if (error.name === 'NotReadableError') {
-                    log('麦克风被其他应用占用，请关闭其他使用麦克风的程序', 'info');
+                    log('🔒 麦克风被其他应用占用或硬件错误', 'error');
+                    log('💡 请尝试：', 'info');
+                    log('   1. 关闭其他使用麦克风的程序（如视频会议软件）', 'info');
+                    log('   2. 重新插拔麦克风设备', 'info');
+                    log('   3. 重启浏览器后再试', 'info');
+                } else if (error.message === '麦克风权限被拒绝') {
+                    log('🚫 麦克风权限已被永久拒绝', 'error');
+                    log('💡 解决方法：', 'info');
+                    log('   1. 点击地址栏左侧的权限图标', 'info');
+                    log('   2. 重置麦克风权限或设置为允许', 'info');
+                    log('   3. 刷新页面重试', 'info');
+                } else {
+                    log('💡 请检查浏览器是否支持麦克风功能，或尝试使用Chrome/Edge浏览器', 'info');
                 }
             } finally {
+                // 确保按钮状态总是能恢复
                 setTimeout(() => {
-                    micTestButton.disabled = false;
-                    micTestButton.textContent = '测试麦克风';
-                }, 6000);
+                    const micTestButton = document.getElementById('micTestButton');
+                    if (micTestButton) {
+                        micTestButton.disabled = false;
+                        micTestButton.textContent = '测试麦克风';
+                    }
+                }, 1000); // 减少等待时间到1秒
             }
         }
 
@@ -1298,10 +1405,41 @@
             // 浏览器信息
             log(`浏览器: ${navigator.userAgent}`, 'info');
             log(`协议: ${location.protocol}`, 'info');
+            log(`主机名: ${location.hostname}`, 'info');
             
-            if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-                log('警告：非HTTPS环境可能导致麦克风访问被阻止', 'warning');
+            // 检查HTTPS环境
+            const isSecureContext = location.protocol === 'https:' || 
+                                  location.hostname === 'localhost' || 
+                                  location.hostname === '127.0.0.1' ||
+                                  location.hostname === '::1';
+            
+            if (!isSecureContext) {
+                log('🚨 重要警告：当前环境不支持麦克风和摄像头', 'error');
+                log('Chrome/Edge浏览器要求HTTPS环境才能使用麦克风和摄像头', 'error');
+                log('', 'info');
+                log('📋 解决方案：', 'info');
+                log('方案1: 使用HTTPS访问', 'info');
+                log('   • 配置SSL证书，使用https://访问', 'info');
+                log('方案2: 使用localhost访问', 'info');
+                log('   • 将服务绑定到localhost，使用localhost:端口访问', 'info');
+                log('方案3: 临时允许HTTP（不推荐）', 'info');
+                log('   • Chrome地址栏输入：chrome://flags/#unsafely-treat-insecure-origin-as-secure', 'info');
+                log('   • 添加当前域名到允许列表', 'info');
+                log('', 'info');
+            } else {
+                log('✅ 安全环境检查通过，支持麦克风和摄像头访问', 'success');
             }
+            
+            // 添加麦克风使用提示
+            log('🎤 麦克风测试说明：', 'info');
+            if (isSecureContext) {
+                log('   • 点击"测试麦克风"按钮开始测试', 'info');
+                log('   • 首次使用时浏览器会请求麦克风权限，请点击"允许"', 'info');
+                log('   • 如果权限被拒绝，请点击地址栏左侧的权限图标重新设置', 'info');
+            } else {
+                log('   • ⚠️ 当前环境无法使用麦克风功能', 'warning');
+                log('   • 请按上述解决方案切换到安全环境', 'warning');
+            };
             
             return allSupported;
         }
@@ -1659,20 +1797,7 @@
                     return;
                 }
 
-                // 预检测：尝试通过HTTP检查服务器是否可达
-                log('正在预检测服务器连通性...', 'info');
-                const httpUrl = url.replace('ws://', 'http://').replace('wss://', 'https://');
-                try {
-                    const testResponse = await fetch(httpUrl, { 
-                        method: 'GET',
-                        mode: 'cors',
-                        cache: 'no-cache'
-                    });
-                    log(`HTTP预检测结果: ${testResponse.status}`, 'debug');
-                } catch (preTestError) {
-                    log(`HTTP预检测失败: ${preTestError.message}`, 'warning');
-                    log('这可能意味着服务器不可达或端口被阻止', 'warning');
-                }
+                log('准备连接到WebSocket服务器...', 'info');
 
                 // 先检查OTA状态
                 log('正在检查OTA状态...', 'info');
@@ -2495,6 +2620,7 @@
         function initApp() {
             initVisualizer();
             initEventListeners();
+            checkEnvironment(); // 检查环境并显示警告
 
             // 检查libopus.js是否正确加载
             checkOpusLoaded();
@@ -2509,6 +2635,25 @@
             }).catch(error => {
                 log(`Opus解码器预加载失败: ${error.message}，将在需要时重试`, 'warning');
             });
+        }
+
+        // 检查环境并显示警告
+        function checkEnvironment() {
+            const isSecureContext = location.protocol === 'https:' || 
+                                  location.hostname === 'localhost' || 
+                                  location.hostname === '127.0.0.1' ||
+                                  location.hostname === '::1';
+            
+            const warningElement = document.getElementById('environmentWarning');
+            const currentUrlElement = document.getElementById('currentUrl');
+            
+            if (currentUrlElement) {
+                currentUrlElement.textContent = location.href;
+            }
+            
+            if (!isSecureContext && warningElement) {
+                warningElement.style.display = 'block';
+            }
         }
 
         // PCM录音处理器代码 - 会被注入到AudioWorklet中

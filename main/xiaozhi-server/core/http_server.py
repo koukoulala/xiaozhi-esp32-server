@@ -3,6 +3,7 @@ from aiohttp import web
 from config.logger import setup_logging
 from core.api.ota_handler import OTAHandler
 from core.api.vision_handler import VisionHandler
+from core.api.audio_handler import AudioHandler
 
 TAG = __name__
 
@@ -13,6 +14,7 @@ class SimpleHttpServer:
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
         self.vision_handler = VisionHandler(config)
+        self.audio_handler = AudioHandler(config)
 
     def _get_websocket_url(self, local_ip: str, port: int) -> str:
         """获取websocket地址
@@ -51,7 +53,8 @@ class SimpleHttpServer:
                         web.options("/xiaozhi/ota/", self.ota_handler.handle_post),
                     ]
                 )
-            # 添加路由
+            
+            # 添加基础路由
             app.add_routes(
                 [
                     web.get("/mcp/vision/explain", self.vision_handler.handle_get),
@@ -59,6 +62,29 @@ class SimpleHttpServer:
                     web.options("/mcp/vision/explain", self.vision_handler.handle_post),
                 ]
             )
+            
+            # 添加音频上传和管理API路由
+            app.add_routes([
+                web.post("/api/audio/upload", self.audio_handler.upload_audio_file),
+                web.get("/api/audio/list", self.audio_handler.list_audio_files),
+                web.get("/api/audio/reference-files", self.audio_handler.get_reference_files),
+                web.get("/api/audio/download/{file_id}", self.audio_handler.download_audio_file),
+                web.put("/api/audio/update-text/{file_id}", self.audio_handler.update_reference_text),
+                web.delete("/api/audio/delete/{file_id}", self.audio_handler.delete_audio_file),
+                web.post("/api/audio/cleanup-temp", self.audio_handler.cleanup_temp_files),
+                web.get("/api/audio/info/{file_id}", self.audio_handler.get_audio_file_info),
+                web.get("/api/audio/supported-formats", self.audio_handler.get_supported_formats),
+                # CORS支持
+                web.options("/api/audio/upload", self.audio_handler.handle_options),
+                web.options("/api/audio/list", self.audio_handler.handle_options),
+                web.options("/api/audio/reference-files", self.audio_handler.handle_options),
+                web.options("/api/audio/download/{file_id}", self.audio_handler.handle_options),
+                web.options("/api/audio/update-text/{file_id}", self.audio_handler.handle_options),
+                web.options("/api/audio/delete/{file_id}", self.audio_handler.handle_options),
+                web.options("/api/audio/cleanup-temp", self.audio_handler.handle_options),
+                web.options("/api/audio/info/{file_id}", self.audio_handler.handle_options),
+                web.options("/api/audio/supported-formats", self.audio_handler.handle_options),
+            ])
 
             # 运行服务
             runner = web.AppRunner(app)

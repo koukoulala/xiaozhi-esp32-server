@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小智设备专项测试页面</title>
+    
+    <!-- 添加favicon -->
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==">
+    
+    <style>
+        body {
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .device-selector {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            color: white;
+        }
+
+        .device-selector h2 {
+            margin: 0 0 15px 0;
+            font-size: 20px;
+        }
+
+        .device-input-group {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .device-input-group label {
+            font-weight: 500;
+            min-width: 80px;
+        }
+
+        .device-input-group input {
+            flex: 1;
+            min-width: 200px;
+            padding: 10px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .device-input-group button {
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid white;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .device-input-group button:hover {
+            background: white;
+            color: #f5576c;
+        }
+
+        .status-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 5px solid #007bff;
+        }
+
+        .status-card h3 {
+            margin: 0 0 15px 0;
+            color: #333;
+            font-size: 18px;
+        }
+
+        .status-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 8px 0;
+        }
+
+        .status-label {
+            font-weight: 500;
+            color: #666;
+        }
+
+        .status-value {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online {
+            background-color: #28a745;
+        }
+
+        .status-offline {
+            background-color: #dc3545;
+        }
+
+        .status-unknown {
+            background-color: #ffc107;
+        }
+
+        .test-section {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+        }
+
+        .test-section h3 {
+            margin: 0 0 20px 0;
+            color: #333;
+            font-size: 20px;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+
+        .test-controls {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .test-btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            min-width: 120px;
+        }
+
+        .test-btn-primary {
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            color: white;
+        }
+
+        .test-btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 123, 255, 0.4);
+        }
+
+        .test-btn-secondary {
+            background: linear-gradient(135deg, #6c757d, #545b62);
+            color: white;
+        }
+
+        .test-btn-secondary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(108, 117, 125, 0.4);
+        }
+
+        .test-btn-danger {
+            background: linear-gradient(135deg, #dc3545, #b21e2f);
+            color: white;
+        }
+
+        .test-btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(220, 53, 69, 0.4);
+        }
+
+        .test-results {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #dee2e6;
+            min-height: 300px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+
+        .log-info {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+        }
+
+        .log-success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+        }
+
+        .log-warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+        }
+
+        .log-error {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+        }
+
+        .audio-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin: 15px 0;
+        }
+
+        .audio-player {
+            flex: 1;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .loading {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .loading::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+            animation: loading 1.5s infinite;
+        }
+
+        @keyframes loading {
+            0% { left: -100%; }
+            100% { left: 100%; }
+        }
+
+        .device-info-card {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .device-info-card h3 {
+            margin: 0 0 15px 0;
+        }
+
+        .device-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .device-detail {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .device-detail-label {
+            font-size: 12px;
+            opacity: 0.8;
+            margin-bottom: 5px;
+        }
+
+        .device-detail-value {
+            font-weight: 600;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>🤖 小智设备专项测试</h1>
+        
+        <!-- 设备选择器 -->
+        <div class="device-selector">
+            <h2>🔍 设备选择</h2>
+            <div class="device-input-group">
+                <label for="deviceMac">设备MAC:</label>
+                <input type="text" id="deviceMac" placeholder="例如: 24:0A:C4:1D:3B:F0" 
+                       pattern="^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$">
+                <button onclick="connectToDevice()">连接设备</button>
+                <button onclick="clearDevice()">清除</button>
+            </div>
+        </div>
+
+        <!-- 设备信息卡片 -->
+        <div id="deviceInfoCard" class="device-info-card hidden">
+            <h3>📱 设备信息</h3>
+            <div class="device-details">
+                <div class="device-detail">
+                    <div class="device-detail-label">MAC地址</div>
+                    <div class="device-detail-value" id="deviceMacDisplay">--</div>
+                </div>
+                <div class="device-detail">
+                    <div class="device-detail-label">连接状态</div>
+                    <div class="device-detail-value" id="deviceStatus">
+                        <span class="status-indicator status-unknown"></span>未知
+                    </div>
+                </div>
+                <div class="device-detail">
+                    <div class="device-detail-label">固件版本</div>
+                    <div class="device-detail-value" id="deviceVersion">--</div>
+                </div>
+                <div class="device-detail">
+                    <div class="device-detail-label">最后活跃</div>
+                    <div class="device-detail-value" id="deviceLastSeen">--</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 状态监控 -->
+        <div class="status-section">
+            <div class="status-card">
+                <h3>🌐 服务器状态</h3>
+                <div class="status-info">
+                    <span class="status-label">WebSocket:</span>
+                    <span class="status-value" id="wsStatus">
+                        <span class="status-indicator status-offline"></span>断开
+                    </span>
+                </div>
+                <div class="status-info">
+                    <span class="status-label">HTTP API:</span>
+                    <span class="status-value" id="httpStatus">
+                        <span class="status-indicator status-unknown"></span>未知
+                    </span>
+                </div>
+                <div class="status-info">
+                    <span class="status-label">服务器时间:</span>
+                    <span class="status-value" id="serverTime">--</span>
+                </div>
+            </div>
+
+            <div class="status-card">
+                <h3>📊 设备状态</h3>
+                <div class="status-info">
+                    <span class="status-label">连接时长:</span>
+                    <span class="status-value" id="connectionDuration">--</span>
+                </div>
+                <div class="status-info">
+                    <span class="status-label">消息发送:</span>
+                    <span class="status-value" id="messagesSent">0</span>
+                </div>
+                <div class="status-info">
+                    <span class="status-label">消息接收:</span>
+                    <span class="status-value" id="messagesReceived">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- TTS测试 -->
+        <div class="test-section">
+            <h3>🎵 TTS语音合成测试</h3>
+            <div class="test-controls">
+                <button class="test-btn test-btn-primary" onclick="testTTS()">基础TTS测试</button>
+                <button class="test-btn test-btn-primary" onclick="testCosyVoiceClone()">CosyVoice克隆测试</button>
+                <button class="test-btn test-btn-secondary" onclick="testCustomText()">自定义文本测试</button>
+                <button class="test-btn test-btn-danger" onclick="clearTTSResults()">清除结果</button>
+            </div>
+            <div>
+                <label for="customTTSText">自定义测试文本:</label>
+                <input type="text" id="customTTSText" placeholder="输入要测试的文本..." style="width: 100%; margin: 10px 0; padding: 8px;">
+            </div>
+            <div class="test-results" id="ttsResults">
+                <div class="log-info">等待测试...</div>
+            </div>
+            <div class="audio-controls hidden" id="audioControls">
+                <label>生成的音频:</label>
+                <audio class="audio-player" id="audioPlayer" controls></audio>
+                <button class="test-btn test-btn-secondary" onclick="downloadAudio()">下载音频</button>
+            </div>
+        </div>
+
+        <!-- 设备通信测试 -->
+        <div class="test-section">
+            <h3>📡 设备通信测试</h3>
+            <div class="test-controls">
+                <button class="test-btn test-btn-primary" onclick="testDevicePing()">连接测试</button>
+                <button class="test-btn test-btn-primary" onclick="testDeviceWakeup()">唤醒测试</button>
+                <button class="test-btn test-btn-secondary" onclick="testDeviceRestart()">重启设备</button>
+                <button class="test-btn test-btn-danger" onclick="clearCommResults()">清除结果</button>
+            </div>
+            <div class="test-results" id="commResults">
+                <div class="log-info">等待测试...</div>
+            </div>
+        </div>
+
+        <!-- 完整功能测试 -->
+        <div class="test-section">
+            <h3>🚀 完整功能测试</h3>
+            <div class="test-controls">
+                <button class="test-btn test-btn-primary" onclick="runFullTest()">运行完整测试</button>
+                <button class="test-btn test-btn-secondary" onclick="exportTestReport()">导出测试报告</button>
+                <button class="test-btn test-btn-danger" onclick="clearAllResults()">清除所有结果</button>
+            </div>
+            <div class="test-results" id="fullTestResults">
+                <div class="log-info">等待测试...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 全局变量
+        let websocket = null;
+        let currentDevice = null;
+        let testResults = {
+            tts: [],
+            communication: [],
+            full: []
+        };
+        let connectionStartTime = null;
+        let messagesSent = 0;
+        let messagesReceived = 0;
+
+        // WebSocket连接配置
+        const WS_URL = `ws://${window.location.hostname}:${window.location.port}/xiaozhi/v1/`;
+        const HTTP_API_BASE = `http://${window.location.hostname}:${window.location.port}`;
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeUI();
+            checkServerStatus();
+            
+            // 从URL参数中获取MAC地址
+            const urlParams = new URLSearchParams(window.location.search);
+            const macParam = urlParams.get('mac');
+            if (macParam) {
+                document.getElementById('deviceMac').value = macParam;
+                connectToDevice();
+            }
+        });
+
+        function initializeUI() {
+            // 设置实时时间更新
+            setInterval(updateServerTime, 1000);
+            
+            // 监听MAC地址输入格式化
+            const macInput = document.getElementById('deviceMac');
+            macInput.addEventListener('input', function(e) {
+                let value = e.target.value.replace(/[^0-9A-Fa-f]/g, '');
+                let formatted = value.match(/.{1,2}/g)?.join(':') || value;
+                if (formatted.length <= 17) {
+                    e.target.value = formatted.toUpperCase();
+                }
+            });
+        }
+
+        function updateServerTime() {
+            const now = new Date();
+            document.getElementById('serverTime').textContent = now.toLocaleString();
+        }
+
+        function addLog(containerId, message, type = 'info') {
+            const container = document.getElementById(containerId);
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            logEntry.innerHTML = `<strong>[${timestamp}]</strong> ${message}`;
+            
+            container.appendChild(logEntry);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        async function checkServerStatus() {
+            try {
+                const response = await fetch(`${HTTP_API_BASE}/health`);
+                if (response.ok) {
+                    updateStatus('httpStatus', '在线', 'online');
+                } else {
+                    updateStatus('httpStatus', '错误', 'offline');
+                }
+            } catch (error) {
+                updateStatus('httpStatus', '离线', 'offline');
+            }
+        }
+
+        function updateStatus(elementId, text, status) {
+            const element = document.getElementById(elementId);
+            const indicator = element.querySelector('.status-indicator');
+            
+            element.innerHTML = `<span class="status-indicator status-${status}"></span>${text}`;
+        }
+
+        function connectToDevice() {
+            const macAddress = document.getElementById('deviceMac').value.trim();
+            
+            if (!macAddress) {
+                alert('请输入设备MAC地址');
+                return;
+            }
+
+            if (!isValidMacAddress(macAddress)) {
+                alert('请输入有效的MAC地址格式 (例如: 24:0A:C4:1D:3B:F0)');
+                return;
+            }
+
+            currentDevice = {
+                mac: macAddress,
+                status: 'connecting'
+            };
+
+            // 显示设备信息卡片
+            showDeviceInfo();
+            
+            // 建立WebSocket连接
+            connectWebSocket();
+            
+            addLog('commResults', `开始连接设备: ${macAddress}`, 'info');
+        }
+
+        function isValidMacAddress(mac) {
+            const macPattern = /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/;
+            return macPattern.test(mac);
+        }
+
+        function showDeviceInfo() {
+            const card = document.getElementById('deviceInfoCard');
+            card.classList.remove('hidden');
+            
+            document.getElementById('deviceMacDisplay').textContent = currentDevice.mac;
+            updateStatus('deviceStatus', '连接中...', 'unknown');
+        }
+
+        function connectWebSocket() {
+            if (websocket) {
+                websocket.close();
+            }
+
+            websocket = new WebSocket(WS_URL);
+            connectionStartTime = new Date();
+
+            websocket.onopen = function() {
+                updateStatus('wsStatus', '已连接', 'online');
+                addLog('commResults', 'WebSocket连接成功', 'success');
+                
+                // 发送设备认证消息
+                sendDeviceAuth();
+            };
+
+            websocket.onmessage = function(event) {
+                messagesReceived++;
+                document.getElementById('messagesReceived').textContent = messagesReceived;
+                
+                try {
+                    const data = JSON.parse(event.data);
+                    handleWebSocketMessage(data);
+                } catch (error) {
+                    addLog('commResults', `消息解析错误: ${error.message}`, 'error');
+                }
+            };
+
+            websocket.onclose = function() {
+                updateStatus('wsStatus', '已断开', 'offline');
+                updateStatus('deviceStatus', '离线', 'offline');
+                addLog('commResults', 'WebSocket连接断开', 'warning');
+            };
+
+            websocket.onerror = function(error) {
+                addLog('commResults', `WebSocket错误: ${error}`, 'error');
+                updateStatus('wsStatus', '错误', 'offline');
+            };
+        }
+
+        function sendDeviceAuth() {
+            const authMessage = {
+                type: 'device_auth',
+                mac: currentDevice.mac,
+                timestamp: Date.now()
+            };
+            
+            sendWebSocketMessage(authMessage);
+            addLog('commResults', '发送设备认证请求', 'info');
+        }
+
+        function sendWebSocketMessage(message) {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify(message));
+                messagesSent++;
+                document.getElementById('messagesSent').textContent = messagesSent;
+                return true;
+            } else {
+                addLog('commResults', 'WebSocket未连接，无法发送消息', 'error');
+                return false;
+            }
+        }
+
+        function handleWebSocketMessage(data) {
+            addLog('commResults', `收到消息: ${JSON.stringify(data)}`, 'info');
+            
+            switch (data.type) {
+                case 'device_auth_response':
+                    if (data.success) {
+                        updateStatus('deviceStatus', '已认证', 'online');
+                        currentDevice.status = 'authenticated';
+                        addLog('commResults', '设备认证成功', 'success');
+                    } else {
+                        updateStatus('deviceStatus', '认证失败', 'offline');
+                        addLog('commResults', `设备认证失败: ${data.message}`, 'error');
+                    }
+                    break;
+                    
+                case 'device_info':
+                    updateDeviceInfo(data);
+                    break;
+                    
+                case 'tts_response':
+                    handleTTSResponse(data);
+                    break;
+                    
+                default:
+                    addLog('commResults', `未知消息类型: ${data.type}`, 'warning');
+            }
+        }
+
+        function updateDeviceInfo(data) {
+            if (data.version) {
+                document.getElementById('deviceVersion').textContent = data.version;
+            }
+            if (data.lastSeen) {
+                document.getElementById('deviceLastSeen').textContent = new Date(data.lastSeen).toLocaleString();
+            }
+            
+            // 更新连接时长
+            if (connectionStartTime) {
+                const duration = Math.floor((Date.now() - connectionStartTime.getTime()) / 1000);
+                document.getElementById('connectionDuration').textContent = formatDuration(duration);
+            }
+        }
+
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            if (hours > 0) {
+                return `${hours}小时${minutes}分${secs}秒`;
+            } else if (minutes > 0) {
+                return `${minutes}分${secs}秒`;
+            } else {
+                return `${secs}秒`;
+            }
+        }
+
+        async function testTTS() {
+            addLog('ttsResults', '开始基础TTS测试...', 'info');
+            
+            const testTexts = [
+                '你好，我是小智助手',
+                '今天天气很好',
+                '语音合成测试成功'
+            ];
+            
+            for (let i = 0; i < testTexts.length; i++) {
+                const text = testTexts[i];
+                addLog('ttsResults', `测试文本 ${i + 1}: "${text}"`, 'info');
+                
+                try {
+                    const result = await performTTSRequest(text, 'basic');
+                    if (result.success) {
+                        addLog('ttsResults', `✅ 文本 ${i + 1} 合成成功`, 'success');
+                        if (result.audioUrl) {
+                            showAudioPlayer(result.audioUrl);
+                        }
+                    } else {
+                        addLog('ttsResults', `❌ 文本 ${i + 1} 合成失败: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    addLog('ttsResults', `❌ 文本 ${i + 1} 请求异常: ${error.message}`, 'error');
+                }
+                
+                // 添加延时避免请求过快
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
+            addLog('ttsResults', '基础TTS测试完成', 'info');
+        }
+
+        async function testCosyVoiceClone() {
+            addLog('ttsResults', '开始CosyVoice声音克隆测试...', 'info');
+            
+            const testTexts = [
+                '哈啰啊，这是声音克隆测试',
+                '小智的声音克隆功能正常运行',
+                'CosyVoice声音克隆效果展示'
+            ];
+            
+            for (let i = 0; i < testTexts.length; i++) {
+                const text = testTexts[i];
+                addLog('ttsResults', `克隆测试 ${i + 1}: "${text}"`, 'info');
+                
+                try {
+                    const result = await performTTSRequest(text, 'cosyvoice_clone');
+                    if (result.success) {
+                        addLog('ttsResults', `✅ 克隆测试 ${i + 1} 成功`, 'success');
+                        if (result.audioUrl) {
+                            showAudioPlayer(result.audioUrl);
+                        }
+                    } else {
+                        addLog('ttsResults', `❌ 克隆测试 ${i + 1} 失败: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    addLog('ttsResults', `❌ 克隆测试 ${i + 1} 异常: ${error.message}`, 'error');
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            
+            addLog('ttsResults', 'CosyVoice声音克隆测试完成', 'info');
+        }
+
+        async function testCustomText() {
+            const customText = document.getElementById('customTTSText').value.trim();
+            
+            if (!customText) {
+                alert('请输入自定义测试文本');
+                return;
+            }
+            
+            addLog('ttsResults', `开始自定义文本测试: "${customText}"`, 'info');
+            
+            try {
+                const result = await performTTSRequest(customText, 'custom');
+                if (result.success) {
+                    addLog('ttsResults', '✅ 自定义文本合成成功', 'success');
+                    if (result.audioUrl) {
+                        showAudioPlayer(result.audioUrl);
+                    }
+                } else {
+                    addLog('ttsResults', `❌ 自定义文本合成失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                addLog('ttsResults', `❌ 自定义文本请求异常: ${error.message}`, 'error');
+            }
+        }
+
+        async function performTTSRequest(text, testType) {
+            const startTime = Date.now();
+            
+            try {
+                const response = await fetch(`${HTTP_API_BASE}/api/tts/synthesize`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: text,
+                        device_mac: currentDevice?.mac,
+                        test_type: testType,
+                        provider: testType === 'cosyvoice_clone' ? 'CosyVoiceClone' : 'default'
+                    })
+                });
+                
+                const duration = Date.now() - startTime;
+                addLog('ttsResults', `请求耗时: ${duration}ms`, 'info');
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    return {
+                        success: true,
+                        audioUrl: result.audio_url,
+                        duration: duration
+                    };
+                } else {
+                    const errorText = await response.text();
+                    return {
+                        success: false,
+                        error: `HTTP ${response.status}: ${errorText}`,
+                        duration: duration
+                    };
+                }
+            } catch (error) {
+                const duration = Date.now() - startTime;
+                return {
+                    success: false,
+                    error: error.message,
+                    duration: duration
+                };
+            }
+        }
+
+        function showAudioPlayer(audioUrl) {
+            const audioControls = document.getElementById('audioControls');
+            const audioPlayer = document.getElementById('audioPlayer');
+            
+            audioPlayer.src = audioUrl;
+            audioControls.classList.remove('hidden');
+            
+            addLog('ttsResults', `音频文件: ${audioUrl}`, 'success');
+        }
+
+        function downloadAudio() {
+            const audioPlayer = document.getElementById('audioPlayer');
+            if (audioPlayer.src) {
+                const link = document.createElement('a');
+                link.href = audioPlayer.src;
+                link.download = `tts_test_${Date.now()}.wav`;
+                link.click();
+            }
+        }
+
+        async function testDevicePing() {
+            addLog('commResults', '开始设备连接测试...', 'info');
+            
+            if (!currentDevice) {
+                addLog('commResults', '❌ 请先连接设备', 'error');
+                return;
+            }
+            
+            const pingMessage = {
+                type: 'ping',
+                mac: currentDevice.mac,
+                timestamp: Date.now()
+            };
+            
+            if (sendWebSocketMessage(pingMessage)) {
+                addLog('commResults', '✅ Ping消息已发送', 'success');
+            }
+        }
+
+        async function testDeviceWakeup() {
+            addLog('commResults', '开始设备唤醒测试...', 'info');
+            
+            if (!currentDevice) {
+                addLog('commResults', '❌ 请先连接设备', 'error');
+                return;
+            }
+            
+            const wakeupMessage = {
+                type: 'wakeup_test',
+                mac: currentDevice.mac,
+                text: '你好小智，唤醒测试'
+            };
+            
+            if (sendWebSocketMessage(wakeupMessage)) {
+                addLog('commResults', '✅ 唤醒测试消息已发送', 'success');
+            }
+        }
+
+        async function testDeviceRestart() {
+            if (!confirm('确定要重启设备吗？这将断开当前连接。')) {
+                return;
+            }
+            
+            addLog('commResults', '发送设备重启指令...', 'warning');
+            
+            const restartMessage = {
+                type: 'device_restart',
+                mac: currentDevice.mac
+            };
+            
+            if (sendWebSocketMessage(restartMessage)) {
+                addLog('commResults', '✅ 重启指令已发送', 'success');
+                addLog('commResults', '⏳ 设备将在几秒后重启...', 'warning');
+            }
+        }
+
+        async function runFullTest() {
+            addLog('fullTestResults', '🚀 开始运行完整功能测试...', 'info');
+            
+            // 清除之前的结果
+            testResults.full = [];
+            
+            // 1. 连接测试
+            addLog('fullTestResults', '1️⃣ 设备连接测试', 'info');
+            await testDevicePing();
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // 2. TTS测试
+            addLog('fullTestResults', '2️⃣ TTS功能测试', 'info');
+            await testTTS();
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // 3. CosyVoice克隆测试
+            addLog('fullTestResults', '3️⃣ CosyVoice声音克隆测试', 'info');
+            await testCosyVoiceClone();
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // 4. 唤醒测试
+            addLog('fullTestResults', '4️⃣ 设备唤醒测试', 'info');
+            await testDeviceWakeup();
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            addLog('fullTestResults', '✅ 完整功能测试完成！', 'success');
+            
+            // 生成测试报告
+            generateTestReport();
+        }
+
+        function generateTestReport() {
+            const report = {
+                device: currentDevice,
+                timestamp: new Date().toISOString(),
+                duration: connectionStartTime ? Math.floor((Date.now() - connectionStartTime.getTime()) / 1000) : 0,
+                messagesSent: messagesSent,
+                messagesReceived: messagesReceived,
+                testResults: testResults
+            };
+            
+            addLog('fullTestResults', '📊 测试报告已生成', 'success');
+            addLog('fullTestResults', `设备: ${report.device?.mac || '未知'}`, 'info');
+            addLog('fullTestResults', `测试时长: ${formatDuration(report.duration)}`, 'info');
+            addLog('fullTestResults', `消息统计: 发送${report.messagesSent} 接收${report.messagesReceived}`, 'info');
+            
+            // 保存报告到全局变量，供导出使用
+            window.lastTestReport = report;
+        }
+
+        function exportTestReport() {
+            if (!window.lastTestReport) {
+                alert('没有可导出的测试报告，请先运行完整测试');
+                return;
+            }
+            
+            const reportJson = JSON.stringify(window.lastTestReport, null, 2);
+            const blob = new Blob([reportJson], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `xiaozhi_test_report_${currentDevice?.mac || 'unknown'}_${Date.now()}.json`;
+            link.click();
+            
+            URL.revokeObjectURL(url);
+            
+            addLog('fullTestResults', '✅ 测试报告已导出', 'success');
+        }
+
+        function clearDevice() {
+            if (websocket) {
+                websocket.close();
+            }
+            
+            currentDevice = null;
+            connectionStartTime = null;
+            messagesSent = 0;
+            messagesReceived = 0;
+            
+            document.getElementById('deviceMac').value = '';
+            document.getElementById('deviceInfoCard').classList.add('hidden');
+            document.getElementById('audioControls').classList.add('hidden');
+            
+            updateStatus('wsStatus', '断开', 'offline');
+            updateStatus('deviceStatus', '未知', 'unknown');
+            
+            document.getElementById('messagesSent').textContent = '0';
+            document.getElementById('messagesReceived').textContent = '0';
+            document.getElementById('connectionDuration').textContent = '--';
+            
+            addLog('commResults', '设备连接已清除', 'info');
+        }
+
+        function clearTTSResults() {
+            document.getElementById('ttsResults').innerHTML = '<div class="log-info">等待测试...</div>';
+            document.getElementById('audioControls').classList.add('hidden');
+            testResults.tts = [];
+        }
+
+        function clearCommResults() {
+            document.getElementById('commResults').innerHTML = '<div class="log-info">等待测试...</div>';
+            testResults.communication = [];
+        }
+
+        function clearAllResults() {
+            clearTTSResults();
+            clearCommResults();
+            document.getElementById('fullTestResults').innerHTML = '<div class="log-info">等待测试...</div>';
+            testResults = { tts: [], communication: [], full: [] };
+            window.lastTestReport = null;
+        }
+
+        // 页面关闭时清理WebSocket连接
+        window.addEventListener('beforeunload', function() {
+            if (websocket) {
+                websocket.close();
+            }
+        });
+    </script>
+</body>
+
+</html>
