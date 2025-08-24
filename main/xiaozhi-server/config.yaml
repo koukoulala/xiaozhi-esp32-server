@@ -17,14 +17,14 @@ server:
   # 当你使用docker部署或使用公网部署(使用ssl、域名)时，不一定准确
   # 所以如果你使用docker部署时，将websocket设置成局域网地址
   # 如果你使用公网部署时，将vwebsocket设置成公网地址
-  websocket: ws://你的ip或者域名:端口号/xiaozhi/v1/
+  websocket: ws://20.64.152.107:8000/xiaozhi/v1/
   # 视觉分析接口地址
   # 向设备发送的视觉分析的接口地址
   # 如果按下面默认的写法，系统会自动生成视觉识别地址，并输出在启动日志里，这个地址你可以直接用浏览器访问确认一下
   # 当你使用docker部署或使用公网部署(使用ssl、域名)时，不一定准确
   # 所以如果你使用docker部署时，将vision_explain设置成局域网地址
   # 如果你使用公网部署时，将vision_explain设置成公网地址
-  vision_explain: http://你的ip或者域名:端口号/mcp/vision/explain
+  vision_explain: http://20.64.152.107:8003/mcp/vision/explain
   # OTA返回信息时区偏移量
   timezone_offset: +8
   # 认证配置
@@ -609,9 +609,11 @@ TTS:
     output_dir: tmp/
     response_format: wav
     # 参考音频文件列表（支持多个参考音频）
-    reference_audio: ["config/assets/wakeup_words.wav"]
+    # reference_audio: ["config/assets/wakeup_words.wav"]
+    reference_audio: ["config/assets/test_local.wav"]
     # 参考音频对应的文本（与参考音频一一对应）
-    reference_text: ["哈啰啊，我是小智啦，声音好听的台湾女孩一枚，超开心认识你耶，最近在忙啥，别忘了给我来点有趣的料哦，我超爱听八卦的啦"]
+    # reference_text: ["哈啰啊，我是小智啦，声音好听的台湾女孩一枚，超开心认识你耶，最近在忙啥，别忘了给我来点有趣的料哦，我超爱听八卦的啦"]
+    reference_text: ["妈，最近身体怎么样？记得按时吃饭吃药哈。周末我回家吃饭，你们想吃什么？我提前准备。我会努力工作生活，成为你们的骄傲，也永远是你们的小孩。"]
     # 是否使用音频管理器（启用后可通过 Web 界面上传音频）
     use_audio_manager: true
     # TTS 生成参数

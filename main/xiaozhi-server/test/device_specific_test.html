@@ -332,6 +332,23 @@
             </div>
         </div>
 
+        <!-- 连接配置 -->
+        <div class="device-selector" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
+            <h2>⚙️ 连接配置</h2>
+            <div class="device-input-group">
+                <label for="configHost">服务器地址:</label>
+                <input type="text" id="configHost" placeholder="20.64.152.107" style="min-width: 150px;">
+                <label for="configWsPort">WS端口:</label>
+                <input type="text" id="configWsPort" placeholder="8000" style="min-width: 80px;">
+                <label for="configHttpPort">HTTP端口:</label>
+                <input type="text" id="configHttpPort" placeholder="8002" style="min-width: 80px;">
+                <button onclick="updateConnectionConfig()">应用配置</button>
+            </div>
+            <div style="margin-top: 10px; font-size: 12px; opacity: 0.8;">
+                当前WebSocket: <span id="currentWsUrl">--</span> | HTTP API: <span id="currentHttpUrl">--</span>
+            </div>
+        </div>
+
         <!-- 设备信息卡片 -->
         <div id="deviceInfoCard" class="device-info-card hidden">
             <h3>📱 设备信息</h3>
@@ -459,14 +476,26 @@
         let connectionStartTime = null;
         let messagesSent = 0;
         let messagesReceived = 0;
+        let pingInterval = null; // 保活定时器
 
-        // WebSocket连接配置
-        const WS_URL = `ws://${window.location.hostname}:${window.location.port}/xiaozhi/v1/`;
-        const HTTP_API_BASE = `http://${window.location.hostname}:${window.location.port}`;
+    // ===================== 可配置连接参数 =====================
+    // 通过 URL 参数自定义: ?host=20.64.152.107&ws_port=8000&http_port=8002
+    // 也可直接传完整 ws 基础地址: ?ws_base=ws://example.com:8001/xiaozhi/v1/
+    // 如果既传 ws_base 也传 host/ws_port，则优先使用 ws_base
+    const pageParams = new URLSearchParams(window.location.search);
+    const DEFAULT_HOST = window.location.hostname || '20.64.152.107';
+    const HOST = pageParams.get('host') || DEFAULT_HOST;
+    const WS_PORT = pageParams.get('ws_port') || '8000'; // 直连后端默认 8000; 若走 nginx 可改 8001
+    const HTTP_PORT = pageParams.get('http_port') || '8002'; // manager-api / 或 nginx 端口
+    const WS_BASE = pageParams.get('ws_base') || `ws://${HOST}:${WS_PORT}/xiaozhi/v1/`;
+    const HTTP_API_BASE = pageParams.get('http_base') || `http://${HOST}:${HTTP_PORT}`;
+    // 当前实际使用的 WebSocket 完整地址在建立连接时拼接 device-id & client-id 查询参数
+    // ==========================================================
 
         // 初始化
         document.addEventListener('DOMContentLoaded', function() {
             initializeUI();
+            initializeConnectionConfig();
             checkServerStatus();
             
             // 从URL参数中获取MAC地址
@@ -493,6 +522,39 @@
             });
         }
 
+        function initializeConnectionConfig() {
+            // 设置默认配置
+            document.getElementById('configHost').value = HOST;
+            document.getElementById('configWsPort').value = WS_PORT;
+            document.getElementById('configHttpPort').value = HTTP_PORT;
+            
+            // 更新显示
+            updateConnectionConfigDisplay();
+        }
+
+        function updateConnectionConfig() {
+            const newHost = document.getElementById('configHost').value.trim() || HOST;
+            const newWsPort = document.getElementById('configWsPort').value.trim() || WS_PORT;
+            const newHttpPort = document.getElementById('configHttpPort').value.trim() || HTTP_PORT;
+            
+            // 更新全局变量（重新赋值常量）
+            window.CURRENT_HOST = newHost;
+            window.CURRENT_WS_PORT = newWsPort;
+            window.CURRENT_HTTP_PORT = newHttpPort;
+            window.CURRENT_WS_BASE = `ws://${newHost}:${newWsPort}/xiaozhi/v1/`;
+            window.CURRENT_HTTP_API_BASE = `http://${newHost}:${newHttpPort}`;
+            
+            updateConnectionConfigDisplay();
+            addLog('commResults', `连接配置已更新: WS=${newHost}:${newWsPort}, HTTP=${newHost}:${newHttpPort}`, 'success');
+        }
+
+        function updateConnectionConfigDisplay() {
+            const wsBase = window.CURRENT_WS_BASE || WS_BASE;
+            const httpBase = window.CURRENT_HTTP_API_BASE || HTTP_API_BASE;
+            document.getElementById('currentWsUrl').textContent = wsBase;
+            document.getElementById('currentHttpUrl').textContent = httpBase;
+        }
+
         function updateServerTime() {
             const now = new Date();
             document.getElementById('serverTime').textContent = now.toLocaleString();
@@ -512,7 +574,8 @@
 
         async function checkServerStatus() {
             try {
-                const response = await fetch(`${HTTP_API_BASE}/health`);
+                const httpBase = window.CURRENT_HTTP_API_BASE || HTTP_API_BASE;
+                const response = await fetch(`${httpBase}/xiaozhi/health`);
                 if (response.ok) {
                     updateStatus('httpStatus', '在线', 'online');
                 } else {
@@ -572,18 +635,35 @@
 
         function connectWebSocket() {
             if (websocket) {
+                clearPingKeepAlive(); // 清理之前的定时器
                 websocket.close();
             }
-
-            websocket = new WebSocket(WS_URL);
+            
+            // 生成 client-id（避免重复）
+            const clientId = `web_${Date.now().toString(36)}`;
+            // 使用当前配置的地址
+            const wsBase = window.CURRENT_WS_BASE || WS_BASE;
+            // 必须携带 device-id 与 client-id 查询参数，否则服务器会立即关闭连接
+            const fullWsUrl = `${wsBase}?device-id=${encodeURIComponent(currentDevice.mac)}&client-id=${encodeURIComponent(clientId)}`;
+            addLog('commResults', `尝试连接: ${fullWsUrl}`, 'info');
+            try {
+                websocket = new WebSocket(fullWsUrl);
+            } catch (e) {
+                addLog('commResults', `创建WebSocket失败: ${e.message}`, 'error');
+                updateStatus('wsStatus', '错误', 'offline');
+                return;
+            }
             connectionStartTime = new Date();
 
             websocket.onopen = function() {
                 updateStatus('wsStatus', '已连接', 'online');
                 addLog('commResults', 'WebSocket连接成功', 'success');
                 
-                // 发送设备认证消息
-                sendDeviceAuth();
+                // 发送标准 hello 消息（模拟真实设备行为）
+                sendHelloMessage();
+                
+                // 启动定时 ping 保活
+                startPingKeepAlive();
             };
 
             websocket.onmessage = function(event) {
@@ -598,10 +678,19 @@
                 }
             };
 
-            websocket.onclose = function() {
+            websocket.onclose = function(event) {
                 updateStatus('wsStatus', '已断开', 'offline');
                 updateStatus('deviceStatus', '离线', 'offline');
-                addLog('commResults', 'WebSocket连接断开', 'warning');
+                
+                // 显示详细的关闭信息
+                const closeReason = getCloseReason(event.code);
+                addLog('commResults', `WebSocket连接断开 - 代码: ${event.code}, 原因: ${closeReason}`, 'warning');
+                if (event.reason) {
+                    addLog('commResults', `服务器消息: ${event.reason}`, 'info');
+                }
+                
+                // 清理定时器
+                clearPingKeepAlive();
             };
 
             websocket.onerror = function(error) {
@@ -619,6 +708,63 @@
             
             sendWebSocketMessage(authMessage);
             addLog('commResults', '发送设备认证请求', 'info');
+        }
+
+        function sendHelloMessage() {
+            const helloMessage = {
+                type: 'hello',
+                device_id: currentDevice.mac,
+                device_name: 'Web测试设备',
+                device_mac: currentDevice.mac,
+                token: 'your-token1',
+                features: { mcp: true }
+            };
+            
+            if (sendWebSocketMessage(helloMessage)) {
+                addLog('commResults', '发送hello初始化消息', 'success');
+            }
+        }
+
+        function startPingKeepAlive() {
+            // 每30秒发送一次ping保活
+            pingInterval = setInterval(() => {
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    const pingMessage = {
+                        type: 'ping',
+                        timestamp: Date.now()
+                    };
+                    sendWebSocketMessage(pingMessage);
+                    addLog('commResults', '发送ping保活', 'info');
+                }
+            }, 30000);
+        }
+
+        function clearPingKeepAlive() {
+            if (pingInterval) {
+                clearInterval(pingInterval);
+                pingInterval = null;
+            }
+        }
+
+        function getCloseReason(code) {
+            const reasons = {
+                1000: '正常关闭',
+                1001: '端点离开',
+                1002: '协议错误',
+                1003: '不支持的数据类型',
+                1005: '没有状态码',
+                1006: '异常关闭',
+                1007: '无效数据',
+                1008: '违反策略',
+                1009: '消息过大',
+                1010: '扩展错误',
+                1011: '服务器错误',
+                1012: '服务重启',
+                1013: '稍后重试',
+                1014: '网关错误',
+                1015: 'TLS握手失败'
+            };
+            return reasons[code] || `未知错误码: ${code}`;
         }
 
         function sendWebSocketMessage(message) {
@@ -655,9 +801,99 @@
                 case 'tts_response':
                     handleTTSResponse(data);
                     break;
+
+                case 'welcome':
+                case 'session_start':
+                    updateStatus('deviceStatus', '会话已建立', 'online');
+                    addLog('commResults', '收到欢迎消息，会话建立成功', 'success');
+                    break;
+
+                case 'pong':
+                    addLog('commResults', '收到pong响应', 'info');
+                    break;
+
+                case 'mcp':
+                    // 处理MCP消息
+                    handleMCPMessage(data);
+                    break;
                     
                 default:
-                    addLog('commResults', `未知消息类型: ${data.type}`, 'warning');
+                    addLog('commResults', `收到消息类型: ${data.type}`, 'info');
+            }
+        }
+
+        function handleMCPMessage(data) {
+            addLog('commResults', '收到MCP消息，发送响应', 'info');
+            
+            if (data.payload && data.payload.method) {
+                switch (data.payload.method) {
+                    case 'initialize':
+                        // 响应初始化
+                        const initResponse = {
+                            type: 'mcp',
+                            payload: {
+                                jsonrpc: '2.0',
+                                id: data.payload.id,
+                                result: {
+                                    protocolVersion: '2024-11-05',
+                                    capabilities: {
+                                        tools: {},
+                                        resources: {},
+                                        prompts: {}
+                                    },
+                                    serverInfo: {
+                                        name: 'WebTestDevice',
+                                        version: '1.0.0'
+                                    }
+                                }
+                            }
+                        };
+                        sendWebSocketMessage(initResponse);
+                        addLog('commResults', '已响应MCP初始化', 'success');
+                        break;
+
+                    case 'tools/list':
+                        // 返回设备支持的工具列表
+                        const toolsResponse = {
+                            type: 'mcp',
+                            payload: {
+                                jsonrpc: '2.0',
+                                id: data.payload.id,
+                                result: {
+                                    tools: [
+                                        {
+                                            name: 'self.get_device_status',
+                                            description: '获取设备状态信息',
+                                            inputSchema: {
+                                                type: 'object',
+                                                properties: {}
+                                            }
+                                        },
+                                        {
+                                            name: 'self.audio_speaker_set_volume',
+                                            description: '设置音量',
+                                            inputSchema: {
+                                                type: 'object',
+                                                properties: {
+                                                    volume: {
+                                                        type: 'number',
+                                                        description: '音量值 0-100'
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        };
+                        sendWebSocketMessage(toolsResponse);
+                        addLog('commResults', '已响应工具列表', 'success');
+                        updateStatus('deviceStatus', '已连接', 'online');
+                        break;
+
+                    default:
+                        addLog('commResults', `未处理的MCP方法: ${data.payload.method}`, 'warning');
+                }
             }
         }
 
@@ -786,7 +1022,8 @@
             const startTime = Date.now();
             
             try {
-                const response = await fetch(`${HTTP_API_BASE}/api/tts/synthesize`, {
+                const httpBase = window.CURRENT_HTTP_API_BASE || HTTP_API_BASE;
+                const response = await fetch(`${httpBase}/xiaozhi/api/tts/synthesize`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -976,6 +1213,7 @@
 
         function clearDevice() {
             if (websocket) {
+                clearPingKeepAlive(); // 清理定时器
                 websocket.close();
             }
             
