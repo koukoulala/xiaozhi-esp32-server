@@ -610,10 +610,10 @@ TTS:
     response_format: wav
     # 参考音频文件列表（支持多个参考音频）
     # reference_audio: ["config/assets/wakeup_words.wav"]
-    reference_audio: ["config/assets/test_local.wav"]
+    reference_audio: ["config/assets/standard_xiaoyu.wav"]
     # 参考音频对应的文本（与参考音频一一对应）
     # reference_text: ["哈啰啊，我是小智啦，声音好听的台湾女孩一枚，超开心认识你耶，最近在忙啥，别忘了给我来点有趣的料哦，我超爱听八卦的啦"]
-    reference_text: ["妈，最近身体怎么样？记得按时吃饭吃药哈。周末我回家吃饭，你们想吃什么？我提前准备。我会努力工作生活，成为你们的骄傲，也永远是你们的小孩。"]
+    reference_text: ["你好，我是晓宇，我是山东滨州人，这是我的普通话测试部分。"]
     # 是否使用音频管理器（启用后可通过 Web 界面上传音频）
     use_audio_manager: true
     # TTS 生成参数

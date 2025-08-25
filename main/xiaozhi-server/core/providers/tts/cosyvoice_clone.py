@@ -148,11 +148,11 @@ class TTSProvider(TTSProviderBase):
         self.audio_file_type = config.get("response_format", "wav")
         
         # Voice cloning configuration
-        ref_audio = config.get("reference_audio", ["config/assets/wakeup_words.wav"])
-        ref_text = config.get("reference_text", ["哈啰啊，我是小智啦"])
+        ref_audio = config.get("reference_audio", ["config/assets/local_xiaoyu.wav"])
+        ref_text = config.get("reference_text", ["你好，我是晓宇，我是山东滨州人，这是我的方言测试部分。"])
         
         # 检查是否使用音频管理器
-        use_audio_manager = config.get("use_audio_manager", True)  # 默认启用音频管理器
+        use_audio_manager = config.get("use_audio_manager", False)  # 默认禁用音频管理器
         if use_audio_manager:
             # 从音频管理器获取参考文件
             try:
@@ -166,6 +166,8 @@ class TTSProvider(TTSProviderBase):
                     logger.bind(tag=TAG).warning("音频管理器中没有找到参考文件，使用默认配置")
             except Exception as e:
                 logger.bind(tag=TAG).error(f"从音频管理器加载参考文件失败: {e}")
+        else:
+            logger.bind(tag=TAG).info("音频管理器已禁用，使用配置文件中的参考音频")
         
         # Handle both string and list inputs
         self.reference_audio = [ref_audio] if isinstance(ref_audio, str) else ref_audio
@@ -286,34 +288,5 @@ class TTSProvider(TTSProviderBase):
             logger.bind(tag=TAG).error(f"[COSYVOICE_CLONE] Full traceback: {traceback.format_exc()}")
             raise
 
-    def to_tts(self, text: str) -> list:
-        """
-        Non-streaming TTS processing for testing and saving audio files
-        
-        Args:
-            text: Text to convert
-            
-        Returns:
-            list: List of audio data (empty for non-opus implementations)
-        """
-        try:
-            import asyncio
-            
-            # Generate unique filename
-            output_file = os.path.join(
-                self.output_file,
-                f"cosyvoice_clone_{int(time.time() * 1000)}.{self.audio_file_type}"
-            )
-            
-            # Run async function
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                audio_data = loop.run_until_complete(self.text_to_speak(text, output_file))
-                return [output_file] if audio_data else []
-            finally:
-                loop.close()
-                
-        except Exception as e:
-            logger.bind(tag=TAG).error(f"[COSYVOICE_CLONE] to_tts failed: {e}")
-            return []
+    # 删除错误的 to_tts 方法，使用基类的正确实现
+    # 基类会根据 delete_audio_file 参数正确处理音频数据
