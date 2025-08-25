@@ -19,9 +19,8 @@ logging.basicConfig(level=logging.WARNING)
 
 
 class AsyncPerformanceTester:
-    def __init__(self, test_modules="all"):
+    def __init__(self):
         self.config = load_config()
-        self.test_modules = test_modules.lower()
         self.test_sentences = self.config.get("module_test", {}).get(
             "test_sentences",
             [
@@ -293,12 +292,6 @@ class AsyncPerformanceTester:
             print(f"⚠️ {llm_name} 句子测试失败: {str(e)}")
             return None
 
-    def _should_test_module(self, module_type):
-        """检查是否应该测试指定的模块类型"""
-        if self.test_modules == "all":
-            return True
-        return self.test_modules == module_type.lower()
-
     def _generate_combinations(self):
         """生成最佳组合建议"""
         valid_llms = [
@@ -373,33 +366,32 @@ class AsyncPerformanceTester:
 
     def _print_results(self):
         """打印测试结果"""
-        if self._should_test_module("llm"):
-            llm_table = []
-            for name, data in self.results["llm"].items():
-                if data["errors"] == 0:
-                    stability = data["std_first_token"] / data["avg_first_token"]
-                    llm_table.append(
-                        [
-                            name,  # 不需要固定宽度，让tabulate自己处理对齐
-                            f"{data['avg_first_token']:.3f}秒",
-                            f"{data['avg_response']:.3f}秒",
-                            f"{stability:.3f}",
-                        ]
-                    )
-
-            if llm_table:
-                print("\nLLM 性能排行:\n")
-                print(
-                    tabulate(
-                        llm_table,
-                        headers=["模型名称", "首字耗时", "总耗时", "稳定性"],
-                        tablefmt="github",
-                        colalign=("left", "right", "right", "right"),
-                        disable_numparse=True,
-                    )
+        llm_table = []
+        for name, data in self.results["llm"].items():
+            if data["errors"] == 0:
+                stability = data["std_first_token"] / data["avg_first_token"]
+                llm_table.append(
+                    [
+                        name,  # 不需要固定宽度，让tabulate自己处理对齐
+                        f"{data['avg_first_token']:.3f}秒",
+                        f"{data['avg_response']:.3f}秒",
+                        f"{stability:.3f}",
+                    ]
                 )
-            else:
-                print("\n⚠️ 没有可用的LLM模块进行测试。")
+
+        if llm_table:
+            print("\nLLM 性能排行:\n")
+            print(
+                tabulate(
+                    llm_table,
+                    headers=["模型名称", "首字耗时", "总耗时", "稳定性"],
+                    tablefmt="github",
+                    colalign=("left", "right", "right", "right"),
+                    disable_numparse=True,
+                )
+            )
+        else:
+            print("\n⚠️ 没有可用的LLM模块进行测试。")
 
         if self._should_test_module("tts"):
             tts_table = []
@@ -725,4 +717,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
