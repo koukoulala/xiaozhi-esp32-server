@@ -153,6 +153,7 @@ class TTSProvider(TTSProviderBase):
         
         # 检查是否使用音频管理器
         use_audio_manager = config.get("use_audio_manager", False)  # 默认禁用音频管理器
+        '''
         if use_audio_manager:
             # 从音频管理器获取参考文件
             try:
@@ -168,6 +169,7 @@ class TTSProvider(TTSProviderBase):
                 logger.bind(tag=TAG).error(f"从音频管理器加载参考文件失败: {e}")
         else:
             logger.bind(tag=TAG).info("音频管理器已禁用，使用配置文件中的参考音频")
+        '''
         
         # Handle both string and list inputs
         self.reference_audio = [ref_audio] if isinstance(ref_audio, str) else ref_audio
@@ -257,7 +259,7 @@ class TTSProvider(TTSProviderBase):
                 "Content-Type": "application/json",
             }
             
-            logger.bind(tag=TAG).info(f"[COSYVOICE_CLONE] Sending TTS request for text: '{text[:50]}...'")
+            logger.bind(tag=TAG).info(f"[COSYVOICE_CLONE] Sending TTS request for text: '{text}'")
             logger.bind(tag=TAG).info(f"[COSYVOICE_CLONE] Using {len(references)} reference(s)")
             
             # Make request

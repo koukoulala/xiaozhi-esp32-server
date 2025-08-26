@@ -19,8 +19,9 @@ logging.basicConfig(level=logging.WARNING)
 
 
 class AsyncPerformanceTester:
-    def __init__(self):
+    def __init__(self, test_modules="all"):
         self.config = load_config()
+        self.test_modules = test_modules  # Add this line
         self.test_sentences = self.config.get("module_test", {}).get(
             "test_sentences",
             [
@@ -480,6 +481,12 @@ class AsyncPerformanceTester:
                 else:
                     pass
 
+    def _should_test_module(self, module_type: str) -> bool:
+        """检查是否应该测试指定的模块类型"""
+        if self.test_modules == "all":
+            return True
+        return self.test_modules == module_type
+
     async def run(self):
         """执行异步测试"""
         print(f"🔍 开始筛选可用模块 (测试模式: {self.test_modules})...")
@@ -717,4 +724,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

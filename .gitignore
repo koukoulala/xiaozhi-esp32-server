@@ -1,3 +1,16 @@
+**/*.bin
+**/*.whl
+**/*.tar.gz
+**/*.tar
+**/*.pt
+**/*.zip
+**/*.onnx
+**/*.safetensors
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 .idea/
