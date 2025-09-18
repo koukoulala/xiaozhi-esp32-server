@@ -1,0 +1,98 @@
+{
+  "database": {
+    "host": "localhost",
+    "port": 3306,
+    "user": "root",
+    "password": "your_mysql_password",
+    "database": "manager_api",
+    "charset": "utf8mb4",
+    "pool_size": 10,
+    "max_overflow": 20
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8001,
+    "ssl_enabled": false,
+    "ssl_cert_path": "",
+    "ssl_key_path": ""
+  },
+  "eldercare": {
+    "device_discovery_timeout": 30,
+    "device_pairing_timeout": 60,
+    "heartbeat_interval": 30,
+    "data_sync_batch_size": 100,
+    "data_retention_days": 90,
+    "emergency_alert_priority": "high",
+    "emergency_contacts": [
+      {
+        "name": "家庭医生",
+        "phone": "120",
+        "email": "doctor@hospital.com",
+        "priority": 1
+      }
+    ],
+    "health_thresholds": {
+      "血压": {
+        "收缩压": {"min": 90, "max": 140, "unit": "mmHg"},
+        "舒张压": {"min": 60, "max": 90, "unit": "mmHg"}
+      },
+      "血糖": {
+        "空腹": {"min": 3.9, "max": 6.1, "unit": "mmol/L"},
+        "餐后": {"min": 3.9, "max": 11.1, "unit": "mmol/L"}
+      },
+      "体重": {
+        "BMI": {"min": 18.5, "max": 25.0, "unit": "kg/m²"}
+      }
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s [%(name)s] %(levelname)s - %(message)s",
+    "file_enabled": true,
+    "file_path": "logs/eldercare_mcp.log",
+    "max_file_size": "10MB",
+    "backup_count": 5
+  },
+  "security": {
+    "enable_authentication": false,
+    "api_key_required": false,
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_minute": 100
+    },
+    "allowed_origins": ["*"],
+    "cors_enabled": true
+  },
+  "notifications": {
+    "email": {
+      "enabled": false,
+      "smtp_server": "smtp.gmail.com",
+      "smtp_port": 587,
+      "username": "",
+      "password": "",
+      "use_tls": true
+    },
+    "sms": {
+      "enabled": false,
+      "provider": "twilio",
+      "account_sid": "",
+      "auth_token": "",
+      "from_number": ""
+    },
+    "push": {
+      "enabled": false,
+      "firebase_key": ""
+    }
+  },
+  "monitoring": {
+    "health_check_enabled": true,
+    "metrics_collection": true,
+    "performance_logging": true,
+    "alert_thresholds": {
+      "cpu_usage_percent": 80,
+      "memory_usage_percent": 85,
+      "disk_usage_percent": 90,
+      "response_time_ms": 5000
+    }
+  }
+}

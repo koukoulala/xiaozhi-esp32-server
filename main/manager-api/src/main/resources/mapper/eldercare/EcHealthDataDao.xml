@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="xiaozhi.modules.eldercare.dao.EcHealthDataDao">
+
+    <resultMap type="xiaozhi.modules.eldercare.entity.EcHealthDataEntity" id="ecHealthDataMap">
+        <result property="id" column="id"/>
+        <result property="userId" column="user_id"/>
+        <result property="deviceId" column="device_id"/>
+        <result property="timestamp" column="timestamp"/>
+        <result property="heartRate" column="heart_rate"/>
+        <result property="bloodPressureSystolic" column="blood_pressure_systolic"/>
+        <result property="bloodPressureDiastolic" column="blood_pressure_diastolic"/>
+        <result property="temperature" column="temperature"/>
+        <result property="bloodOxygen" column="blood_oxygen"/>
+        <result property="activityLevel" column="activity_level"/>
+        <result property="fallDetected" column="fall_detected"/>
+        <result property="dataSource" column="data_source"/>
+        <result property="rawData" column="raw_data"/>
+        <result property="createDate" column="create_date"/>
+    </resultMap>
+
+    <select id="getByUserIdAndDateRange" resultMap="ecHealthDataMap">
+        SELECT * FROM ec_health_data 
+        WHERE user_id = #{userId}
+        <if test="startDate != null">
+            AND timestamp >= #{startDate}
+        </if>
+        <if test="endDate != null">
+            AND timestamp &lt;= #{endDate}
+        </if>
+        ORDER BY timestamp DESC
+    </select>
+
+    <select id="getLatestByUserId" resultMap="ecHealthDataMap">
+        SELECT * FROM ec_health_data 
+        WHERE user_id = #{userId}
+        ORDER BY timestamp DESC
+        LIMIT 1
+    </select>
+
+</mapper>

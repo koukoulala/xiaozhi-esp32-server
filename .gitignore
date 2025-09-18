@@ -161,6 +161,7 @@ tmp
 main/xiaozhi-server/data
 
 main/manager-web/node_modules
+main/eldercare-web/node_modules
 .config.yaml
 .secrets.yaml
 .private_config.yaml
@@ -185,12 +186,33 @@ main/manager-api/.vscode
 main/manager-web/.webpack_cache/
 main/xiaozhi-server/mysql
 uploadfile
+# Ignore all JSON files by default except important configuration files
 *.json
 .vscode
 .cursor
- 
+
+# Keep important configuration files
 !package.json
 !**/package.json
+!tsconfig.json
+!**/tsconfig.json
+!jsconfig.json
+!**/jsconfig.json
+!components.json
+!**/components.json
+!manifest.json
+!**/manifest.json
+!pages.json
+!**/pages.json
+
+# Keep ElderCare MCP configuration
+!main/xiaozhi-server/ElderCare/config/*.json
+
+# Keep MCP server settings
+!main/xiaozhi-server/mcp_server_settings.json
+
+# Keep AI model configuration files
+!main/xiaozhi-server/models/*/configuration.json
 
 # Do not ignore env and json files inside manager-mobile
 !main/manager-mobile/**/env/

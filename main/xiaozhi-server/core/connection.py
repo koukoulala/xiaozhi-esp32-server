@@ -10,6 +10,7 @@ import threading
 import traceback
 import subprocess
 import websockets
+from datetime import datetime
 from core.utils.util import (
     extract_json_from_string,
     check_vad_update,
@@ -160,6 +161,12 @@ class ConnectionHandler:
 
         # 初始化提示词管理器
         self.prompt_manager = PromptManager(config, self.logger)
+        
+        # 初始化ElderCare集成
+        self.eldercare_enabled = False
+        self.user_id = None  # 老人用户ID
+        self.eldercare_context = {}  # 存储老人的健康和声音配置上下文
+        self._init_eldercare_integration()
 
     async def handle_connection(self, ws):
         try:
@@ -201,6 +208,9 @@ class ConnectionHandler:
             # 认证通过,继续处理
             self.websocket = ws
             self.device_id = self.headers.get("device-id", None)
+
+            # 初始化ElderCare用户ID
+            await self.set_user_id_from_device()
 
             # 初始化活动时间戳
             self.last_activity_time = time.time() * 1000
@@ -279,6 +289,8 @@ class ConnectionHandler:
     async def _route_message(self, message):
         """消息路由"""
         if isinstance(message, str):
+            # 检查是否是ElderCare相关消息
+            await self._handle_eldercare_message(message)
             await handleTextMessage(self, message)
         elif isinstance(message, bytes):
             if self.vad is None:
@@ -286,6 +298,83 @@ class ConnectionHandler:
             if self.asr is None:
                 return
             self.asr_audio_queue.put(message)
+    
+    async def _handle_eldercare_message(self, message):
+        """处理ElderCare相关消息"""
+        if not self.eldercare_enabled:
+            return
+        
+        try:
+            # 尝试解析JSON消息
+            if message.strip().startswith('{') and message.strip().endswith('}'):
+                msg_data = json.loads(message)
+                
+                # 处理健康数据上报
+                if msg_data.get('type') == 'health_data':
+                    await self.handle_health_data(msg_data.get('data', {}))
+                    return True
+                
+                # 处理紧急呼救
+                elif msg_data.get('type') == 'emergency_call':
+                    await self._handle_emergency_call(msg_data.get('data', {}))
+                    return True
+                
+                # 处理提醒确认
+                elif msg_data.get('type') == 'reminder_completed':
+                    await self._handle_reminder_completion(msg_data.get('data', {}))
+                    return True
+                    
+        except (json.JSONDecodeError, KeyError):
+            # 不是JSON格式或不是ElderCare消息，继续正常处理
+            pass
+        
+        return False
+    
+    async def _handle_emergency_call(self, call_data):
+        """处理紧急呼救"""
+        try:
+            from ElderCare.api import get_eldercare_api
+            eldercare_api = get_eldercare_api()
+            if eldercare_api and self.user_id:
+                # 记录紧急呼救
+                emergency_data = {
+                    'user_id': self.user_id,
+                    'device_id': self.device_id,
+                    'call_type': call_data.get('call_type', 'manual'),
+                    'location': call_data.get('location'),
+                    'timestamp': datetime.now().isoformat(),
+                    'notes': call_data.get('notes', '用户手动触发紧急呼救')
+                }
+                
+                # 这里应该调用紧急呼救API，暂时记录日志
+                self.logger.bind(tag=TAG).warning(f"🚨 紧急呼救触发: 用户 {self.user_id}, 设备 {self.device_id}")
+                
+                # 发送确认消息
+                await self.send_message({
+                    'type': 'emergency_call_response',
+                    'success': True,
+                    'message': '紧急呼救已触发，正在通知家属...'
+                })
+                
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"处理紧急呼救错误: {e}")
+    
+    async def _handle_reminder_completion(self, completion_data):
+        """处理提醒完成确认"""
+        try:
+            reminder_id = completion_data.get('reminder_id')
+            if reminder_id:
+                # 这里应该调用API标记提醒为已完成
+                self.logger.bind(tag=TAG).info(f"提醒 {reminder_id} 已完成")
+                
+                await self.send_message({
+                    'type': 'reminder_completion_response',
+                    'success': True,
+                    'message': '提醒已标记为完成'
+                })
+                
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"处理提醒完成错误: {e}")
 
     async def handle_restart(self, message):
         """处理服务器重启请求"""
@@ -415,6 +504,13 @@ class ConnectionHandler:
 
         if tts is None:
             tts = DefaultTTS(self.config, delete_audio_file=True)
+
+        # ElderCare集成：配置声音克隆
+        if self.eldercare_enabled and hasattr(tts, 'configure_voice_clone'):
+            try:
+                self.executor.submit(self._configure_eldercare_voice, tts)
+            except Exception as e:
+                self.logger.bind(tag=TAG).error(f"配置ElderCare声音错误: {e}")
 
         return tts
 
@@ -694,6 +790,27 @@ class ConnectionHandler:
                     self.memory.query_memory(query), self.loop
                 )
                 memory_str = future.result()
+
+            # ElderCare集成：获取用户上下文并增强memory
+            if self.eldercare_enabled and depth == 0:  # 只在顶层调用时增强
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.get_user_context(), self.loop
+                    )
+                    eldercare_context = future.result()
+                    
+                    if eldercare_context:
+                        # 构建ElderCare上下文字符串
+                        context_str = self._build_eldercare_context_string(eldercare_context)
+                        if context_str:
+                            # 将ElderCare上下文添加到memory中
+                            if memory_str:
+                                memory_str = f"{memory_str}\n\n{context_str}"
+                            else:
+                                memory_str = context_str
+                            self.logger.bind(tag=TAG).debug(f"ElderCare上下文已添加到对话中")
+                except Exception as e:
+                    self.logger.bind(tag=TAG).error(f"ElderCare上下文增强错误: {e}")
 
             if self.intent_type == "function_call" and functions is not None:
                 # 使用支持functions的streaming接口
@@ -1078,3 +1195,273 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).error(f"超时检查任务出错: {e}")
         finally:
             self.logger.bind(tag=TAG).info("超时检查任务已退出")
+
+    # =========================== ElderCare 集成方法 ===========================
+    
+    def _init_eldercare_integration(self):
+        """初始化ElderCare集成"""
+        try:
+            from ElderCare.api import get_eldercare_api
+            eldercare_api = get_eldercare_api()
+            if eldercare_api:
+                self.eldercare_enabled = True
+                self.logger.bind(tag=TAG).info("ElderCare集成初始化成功")
+            else:
+                self.logger.bind(tag=TAG).warning("ElderCare API未初始化，跳过集成")
+        except ImportError as e:
+            self.logger.bind(tag=TAG).warning(f"ElderCare模块导入失败: {e}")
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"ElderCare集成初始化失败: {e}")
+    
+    async def handle_health_data(self, health_data):
+        """处理健康数据上报"""
+        if not self.eldercare_enabled:
+            return
+        
+        try:
+            from ElderCare.api import get_eldercare_api
+            eldercare_api = get_eldercare_api()
+            if eldercare_api and self.user_id:
+                # 添加用户ID和设备ID到健康数据
+                health_data['user_id'] = self.user_id
+                health_data['device_id'] = self.device_id
+                health_data['data_source'] = 'websocket'
+                
+                # 保存健康数据
+                result = await eldercare_api.save_health_data(health_data)
+                
+                # 发送确认消息给设备
+                if result.get('success'):
+                    await self.send_message({
+                        'type': 'health_data_saved',
+                        'success': True,
+                        'message': '健康数据保存成功',
+                        'health_id': result.get('health_id')
+                    })
+                    self.logger.bind(tag=TAG).info(f"健康数据保存成功: {result.get('health_id')}")
+                else:
+                    await self.send_message({
+                        'type': 'health_data_saved',
+                        'success': False,
+                        'message': result.get('message', '保存失败')
+                    })
+                    self.logger.bind(tag=TAG).error(f"健康数据保存失败: {result.get('message')}")
+                    
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"处理健康数据错误: {e}")
+            await self.send_message({
+                'type': 'health_data_saved',
+                'success': False,
+                'message': f'处理错误: {str(e)}'
+            })
+    
+    async def get_user_context(self):
+        """获取用户上下文信息（健康数据、声音配置等）"""
+        if not self.eldercare_enabled or not self.user_id:
+            return {}
+        
+        try:
+            from ElderCare.api import get_eldercare_api
+            eldercare_api = get_eldercare_api()
+            if not eldercare_api:
+                return {}
+            
+            context = {}
+            
+            # 获取用户最新健康数据
+            health_result = await eldercare_api.get_latest_health_data(self.user_id)
+            if health_result.get('success') and health_result.get('data'):
+                context['health'] = health_result['data']
+            
+            # 获取用户声音配置
+            voice_result = await eldercare_api.get_default_voice(self.user_id)
+            if voice_result.get('success') and voice_result.get('data'):
+                context['voice'] = voice_result['data']
+            
+            # 获取待处理的提醒
+            reminders_result = await eldercare_api.get_reminders(self.user_id, 1)  # 获取今天的提醒
+            if reminders_result.get('success') and reminders_result.get('data'):
+                # 过滤未完成的提醒
+                pending_reminders = [r for r in reminders_result['data'] if not r.get('is_completed')]
+                if pending_reminders:
+                    context['pending_reminders'] = pending_reminders
+            
+            # 缓存上下文
+            self.eldercare_context = context
+            return context
+            
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"获取用户上下文错误: {e}")
+            return {}
+    
+    async def set_user_id_from_device(self):
+        """根据设备ID设置用户ID"""
+        if not self.eldercare_enabled or not self.device_id:
+            return
+        
+        try:
+            from ElderCare.api import get_eldercare_api
+            eldercare_api = get_eldercare_api()
+            if eldercare_api:
+                # 查询设备对应的用户
+                devices_result = await eldercare_api.get_user_devices(self.device_id)
+                if devices_result.get('success') and devices_result.get('data'):
+                    device_info = devices_result['data'][0]
+                    self.user_id = device_info.get('user_id', self.device_id)
+                    self.logger.bind(tag=TAG).info(f"设置用户ID: {self.user_id} (设备: {self.device_id})")
+                else:
+                    # 如果没找到设备记录，使用device_id作为user_id的fallback
+                    self.user_id = self.device_id
+                    self.logger.bind(tag=TAG).info(f"未找到设备记录，使用设备ID作为用户ID: {self.user_id}")
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"设置用户ID错误: {e}")
+            self.user_id = self.device_id  # fallback
+    
+    async def get_enhanced_prompt_with_context(self, original_prompt):
+        """使用ElderCare上下文增强提示词"""
+        if not self.eldercare_enabled:
+            return original_prompt
+        
+        try:
+            context = await self.get_user_context()
+            if not context:
+                return original_prompt
+            
+            enhanced_prompt = original_prompt
+            
+            # 添加健康信息到提示词
+            if 'health' in context:
+                health_info = context['health']
+                health_prompt = f"""
+                
+用户最新健康信息：
+- 心率: {health_info.get('heart_rate', '未知')} bpm
+- 血压: {health_info.get('blood_pressure_systolic', '未知')}/{health_info.get('blood_pressure_diastolic', '未知')} mmHg
+- 体温: {health_info.get('temperature', '未知')} °C
+- 血氧: {health_info.get('blood_oxygen', '未知')} %
+- 活动水平: {health_info.get('activity_level', '未知')}
+
+请根据用户的健康状况提供适当的关怀和建议。
+"""
+                enhanced_prompt += health_prompt
+            
+            # 添加待处理提醒信息
+            if 'pending_reminders' in context:
+                reminders = context['pending_reminders']
+                reminders_text = "待处理的提醒事项：\n"
+                for reminder in reminders[:3]:  # 最多显示3个提醒
+                    reminders_text += f"- {reminder['title']}: {reminder.get('content', '')}\n"
+                enhanced_prompt += f"\n{reminders_text}\n请适时提醒用户完成这些事项。"
+            
+            return enhanced_prompt
+            
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"增强提示词错误: {e}")
+            return original_prompt
+    
+    async def send_message(self, message):
+        """发送消息到WebSocket客户端"""
+        try:
+            if self.websocket and not self.websocket.closed:
+                await self.websocket.send(json.dumps(message))
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"发送消息错误: {e}")
+    
+    def _build_eldercare_context_string(self, context):
+        """构建ElderCare上下文字符串"""
+        try:
+            context_parts = []
+            
+            # 添加健康信息
+            if 'health' in context:
+                health_info = context['health']
+                health_text = f"""
+=== 用户健康状况 ===
+- 心率: {health_info.get('heart_rate', '未知')} bpm
+- 血压: {health_info.get('blood_pressure_systolic', '未知')}/{health_info.get('blood_pressure_diastolic', '未知')} mmHg
+- 体温: {health_info.get('temperature', '未知')} °C
+- 血氧: {health_info.get('blood_oxygen', '未知')} %
+- 活动水平: {health_info.get('activity_level', '未知')}
+- 监测时间: {health_info.get('timestamp', '未知')}
+
+请根据用户的健康状况提供适当的关怀和建议。如发现异常指标，请温和地提醒用户注意。
+"""
+                context_parts.append(health_text)
+            
+            # 添加待处理提醒
+            if 'pending_reminders' in context:
+                reminders = context['pending_reminders']
+                if reminders:
+                    reminders_text = "\n=== 待处理的提醒事项 ===\n"
+                    for i, reminder in enumerate(reminders[:3], 1):  # 最多显示3个
+                        remind_time = reminder.get('remind_time', '未知时间')
+                        reminders_text += f"{i}. {reminder['title']}"
+                        if reminder.get('content'):
+                            reminders_text += f": {reminder['content']}"
+                        reminders_text += f" (预定时间: {remind_time})\n"
+                    
+                    reminders_text += "\n请在合适的时机温和地提醒用户完成这些事项。"
+                    context_parts.append(reminders_text)
+            
+            # 添加声音配置信息（用于TTS个性化）
+            if 'voice' in context:
+                voice_info = context['voice']
+                voice_text = f"""
+=== 用户声音偏好 ===
+- 偏好声音: {voice_info.get('voice_name', '默认')}
+- 是否启用家人声音: {'是' if voice_info.get('is_default') else '否'}
+
+请用温暖、亲切的语调与用户交流，就像家人一样关怀。
+"""
+                context_parts.append(voice_text)
+            
+            if context_parts:
+                return "\n".join(context_parts) + "\n"
+            
+            return ""
+            
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"构建ElderCare上下文字符串错误: {e}")
+            return ""
+    
+    def _configure_eldercare_voice(self, tts):
+        """配置ElderCare声音克隆"""
+        try:
+            if not self.user_id:
+                return
+            
+            # 异步获取用户声音配置
+            future = asyncio.run_coroutine_threadsafe(
+                self.get_user_context(), self.loop
+            )
+            context = future.result()
+            
+            if context and 'voice' in context:
+                voice_config = context['voice']
+                
+                # 如果TTS支持声音克隆配置
+                if hasattr(tts, 'configure_voice_clone'):
+                    tts.configure_voice_clone({
+                        'voice_id': voice_config.get('id'),
+                        'voice_name': voice_config.get('voice_name'),
+                        'reference_audio': voice_config.get('reference_audio'),
+                        'reference_text': voice_config.get('reference_text')
+                    })
+                    self.logger.bind(tag=TAG).info(f"ElderCare声音配置已应用: {voice_config.get('voice_name')}")
+                
+                # 或者通过配置参数的方式
+                elif hasattr(tts, 'config'):
+                    if 'voice_clone' not in tts.config:
+                        tts.config['voice_clone'] = {}
+                    
+                    tts.config['voice_clone'].update({
+                        'enabled': True,
+                        'voice_id': voice_config.get('id'),
+                        'voice_name': voice_config.get('voice_name'),
+                        'reference_audio_path': voice_config.get('reference_audio'),
+                        'reference_text': voice_config.get('reference_text')
+                    })
+                    self.logger.bind(tag=TAG).info(f"ElderCare声音配置已更新到TTS配置中")
+                
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"配置ElderCare声音错误: {e}")

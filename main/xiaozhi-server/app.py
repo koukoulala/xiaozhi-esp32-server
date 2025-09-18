@@ -1,7 +1,13 @@
 import sys
+import os
 import uuid
 import signal
 import asyncio
+
+# 添加项目根目录到Python路径
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
+
 from aioconsole import ainput
 from config.settings import load_config
 from config.logger import setup_logging
@@ -9,6 +15,7 @@ from core.utils.util import get_local_ip, validate_mcp_endpoint
 from core.http_server import SimpleHttpServer
 from core.websocket_server import WebSocketServer
 from core.utils.util import check_ffmpeg_installed
+from ElderCare import init_eldercare_api
 
 TAG = __name__
 logger = setup_logging()
@@ -45,6 +52,21 @@ async def monitor_stdin():
 async def main():
     check_ffmpeg_installed()
     config = load_config()
+
+    # 初始化ElderCare API
+    manager_api_config = config.get("manager-api", {})
+    db_config = {
+        'host': manager_api_config.get('datasource', {}).get('host', '127.0.0.1'),
+        'port': manager_api_config.get('datasource', {}).get('port', 3306),
+        'user': manager_api_config.get('datasource', {}).get('username', 'root'),
+        'password': manager_api_config.get('datasource', {}).get('password', '123456'),
+        'database': manager_api_config.get('datasource', {}).get('database', 'xiaozhi_esp32_server')
+    }
+    try:
+        init_eldercare_api(db_config)
+        logger.bind(tag=TAG).info("ElderCare API初始化成功")
+    except Exception as e:
+        logger.bind(tag=TAG).error(f"ElderCare API初始化失败: {e}")
 
     # 默认使用manager-api的secret作为auth_key
     # 如果secret为空，则生成随机密钥
