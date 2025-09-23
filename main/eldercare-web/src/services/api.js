@@ -1,560 +1,842 @@
 /**
- * ElderCare API 服务层
- * 提供与后端的所有接口交互功能，包括认证、健康监控、声音克隆等
- * 支持实际后端API和模拟数据的自动切换
+ * ElderCare API 服务层 - 统一版本
+ * 支持真实后端API和模拟数据的自动切换
  * 
- * 作者: assistant
- * 日期: 2025-08-27
+ * 作者: GitHub Copilot
+ * 日期: 2025-09-23
+ * 版本: 2.0 (重构版)
  */
 
-const API_BASE_URL = 'http://localhost:8003/eldercare';
+import { handleApiError, showApiStatusToast, showRetryToast } from '../utils/apiErrorHandler';
+
+// API配置
+const API_CONFIG = {
+  // 真实后端API地址（使用相对路径，通过Vite代理访问）
+  REAL_API_URL: '/eldercare',
+  // 管理后端API地址（使用相对路径，通过Vite代理访问）
+  MANAGER_API_URL: '/eldercare',
+  // 连接超时时间
+  TIMEOUT: 30000, // 30秒
+  // 关键API的超时时间
+  CRITICAL_TIMEOUT: 45000, // 45秒
+  // 重试次数
+  MAX_RETRIES: 5
+};
 
 class ElderCareAPI {
-    constructor() {
-        this.baseURL = API_BASE_URL;
-        this.currentUser = null;
+  constructor() {
+    this.isBackendAvailable = false;
+    this.currentMode = 'unknown'; // 'real', 'manager', 'mock'
+    this.currentUser = null;
+    this.initAPI();
+  }
+
+  /**
+   * 初始化API - 自动检测可用的后端服务
+   */
+  async initAPI() {
+    console.log('🔍 正在检测可用的后端服务...');
+    
+    // 检查是否在localStorage中设置了强制API模式
+    const forcedMode = localStorage.getItem('eldercare_api_mode');
+    if (forcedMode) {
+      console.log(`使用强制设置的API模式: ${forcedMode}`);
+      
+      if (forcedMode === 'real') {
+        this.baseURL = API_CONFIG.REAL_API_URL;
+        this.currentMode = 'real';
+        this.isBackendAvailable = true;
+        return;
+      }
+      
+      if (forcedMode === 'manager') {
+        this.baseURL = API_CONFIG.MANAGER_API_URL;
+        this.currentMode = 'manager';
+        this.isBackendAvailable = true;
+        return;
+      }
+      
+      if (forcedMode === 'mock') {
+        this.currentMode = 'mock';
         this.isBackendAvailable = false;
-        this.initAPI();
+        return;
+      }
+
+      if (forcedMode === 'auto') {
+        // 继续执行自动检测逻辑
+      }
+    }
+    
+    // 优先尝试并行检测两个服务
+    const results = await Promise.allSettled([
+      this.checkAPIAvailability(API_CONFIG.REAL_API_URL),
+      this.checkAPIAvailability(API_CONFIG.MANAGER_API_URL)
+    ]);
+    
+    // 1. 优先尝试真实的xiaozhi-server ElderCare API
+    if (results[0].status === 'fulfilled' && results[0].value === true) {
+      this.baseURL = API_CONFIG.REAL_API_URL;
+      this.currentMode = 'real';
+      this.isBackendAvailable = true;
+      console.log('✅ 连接到xiaozhi-server ElderCare API');
+      return;
     }
 
-    async initAPI() {
-        // 检查后端是否可用
-        try {
-            const response = await fetch(`${this.baseURL}/config`, {
-                method: 'GET',
-                timeout: 5000
-            });
-            if (response.ok) {
-                console.log('✅ ElderCare后端连接成功');
-                this.isBackendAvailable = true;
-            } else {
-                console.warn('⚠️ ElderCare后端连接失败，使用模拟数据');
-                this.isBackendAvailable = false;
-            }
-        } catch (error) {
-            console.warn('⚠️ ElderCare后端不可用，使用模拟数据:', error.message);
-            this.isBackendAvailable = false;
+    // 2. 尝试管理后端API
+    if (results[1].status === 'fulfilled' && results[1].value === true) {
+      this.baseURL = API_CONFIG.MANAGER_API_URL;
+      this.currentMode = 'manager';
+      this.isBackendAvailable = true;
+      console.log('✅ 连接到管理后端API');
+      return;
+    }
+
+    // 3. 都不可用时使用模拟数据
+    this.currentMode = 'mock';
+    this.isBackendAvailable = false;
+    console.log('⚠️ 后端服务不可用，使用模拟数据模式');
+    
+    // 在系统诊断页面可以切换模式，暂时先使用模拟数据保证UI可用
+    console.log('提示: 可以在系统诊断页面手动设置API模式');
+  }
+
+  /**
+   * 检查API可用性
+   */
+  async checkAPIAvailability(url) {
+    let retries = 2; // 减少重试次数，加快初始化
+    
+    // 查看URL是否是管理后端API，如果是，优先使用特定端点进行检测
+    const checkEndpoint = '/config';
+    
+    console.log(`尝试连接 ${url}${checkEndpoint}...`);
+    
+    while (retries > 0) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 降低检测超时时间
+        
+        const response = await fetch(`${url}${checkEndpoint}`, {
+          method: 'GET',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          cache: 'no-cache' // 防止缓存影响检测结果
+        });
+        
+        clearTimeout(timeoutId);
+        
+        // 如果响应成功并且是JSON格式
+        if (response.ok) {
+          try {
+            const data = await response.json();
+            console.log('API连接成功，返回数据:', data);
+            return true;
+          } catch (jsonError) {
+            console.log('API连接成功，但返回的不是JSON格式');
+            return true; // 仍然认为是成功的
+          }
         }
         
-        console.log(`🔧 API模式: ${this.isBackendAvailable ? '真实后端' : '模拟数据'}`);
-    }
-
-    // =========================== 工具方法 ===========================
-    
-    async request(endpoint, options = {}) {
-        const url = `${this.baseURL}${endpoint}`;
-        const config = {
+        // 尝试第二个端点
+        if (retries === API_CONFIG.MAX_RETRIES) {
+          // 如果第一次检查失败，尝试使用另一个常见端点
+          const secondCheckEndpoint = '/auth/status';
+          console.log(`尝试连接备用端点 ${url}${secondCheckEndpoint}...`);
+          
+          const controller2 = new AbortController();
+          const timeoutId2 = setTimeout(() => controller2.abort(), API_CONFIG.TIMEOUT);
+          
+          const response2 = await fetch(`${url}${secondCheckEndpoint}`, {
             method: 'GET',
+            signal: controller2.signal,
             headers: {
-                'Content-Type': 'application/json',
-                ...options.headers
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
             },
-            ...options
-        };
+            mode: 'cors',
+            credentials: 'same-origin',
+            cache: 'no-cache'
+          });
+          
+          clearTimeout(timeoutId2);
+          
+          if (response2.ok) {
+            console.log('API备用端点连接成功');
+            return true;
+          }
+        }
+        
+        console.log(`API响应失败，状态码: ${response.status}`);
+        retries--;
+        
+        if (retries > 0) {
+          console.log(`将在1秒后重试，剩余重试次数: ${retries}`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      } catch (error) {
+        console.log(`API连接失败 (重试 ${API_CONFIG.MAX_RETRIES - retries + 1}/${API_CONFIG.MAX_RETRIES}):`, error.message);
+        retries--;
+        if (retries > 0) {
+          console.log(`将在1秒后重试，剩余重试次数: ${retries}`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+    }
+    console.log(`在 ${API_CONFIG.MAX_RETRIES} 次重试后，API连接失败`);
+    return false;
+  }
 
-        try {
-            if (this.isBackendAvailable) {
-                const response = await fetch(url, config);
-                const data = await response.json();
-                return data;
-            } else {
-                // 使用模拟数据
-                return this.getMockData(endpoint, options);
+  /**
+   * 通用请求方法
+   */
+  async request(endpoint, options = {}) {
+    // 是否是关键端点，决定使用哪个超时时间
+    const criticalEndpointList = ['/auth/login', '/auth/register', '/config', '/auth/status'];
+    const isCriticalRequest = criticalEndpointList.some(criticalEndpoint => 
+      endpoint.includes(criticalEndpoint)
+    );
+    const timeoutDuration = isCriticalRequest ? API_CONFIG.CRITICAL_TIMEOUT : API_CONFIG.TIMEOUT;
+    
+    // 记录API请求
+    const requestLog = {
+      endpoint,
+      method: options.method || 'GET',
+      timestamp: new Date().toISOString(),
+      usedMock: false,
+      isCritical: isCriticalRequest
+    };
+    
+    // 如果强制使用模拟数据模式，直接返回模拟数据
+    if (this.currentMode === 'mock') {
+      requestLog.usedMock = true;
+      requestLog.reason = 'mock_mode_forced';
+      this.logApiRequest(requestLog);
+      return this.getMockResponse(endpoint, options);
+    }
+
+    // 如果后端不可用且非强制模式，尝试重新检测后端
+    if (!this.isBackendAvailable && this.currentMode !== 'mock') {
+      console.log('后端可能恢复，尝试重新检测API可用性...');
+      
+      // 优先尝试并行检测两个服务
+      const results = await Promise.allSettled([
+        this.checkAPIAvailability(API_CONFIG.REAL_API_URL),
+        this.checkAPIAvailability(API_CONFIG.MANAGER_API_URL)
+      ]);
+      
+      if (results[0].status === 'fulfilled' && results[0].value === true) {
+        this.baseURL = API_CONFIG.REAL_API_URL;
+        this.currentMode = 'real';
+        this.isBackendAvailable = true;
+        console.log('✅ 重新连接到xiaozhi-server ElderCare API成功');
+      } else if (results[1].status === 'fulfilled' && results[1].value === true) {
+        this.baseURL = API_CONFIG.MANAGER_API_URL;
+        this.currentMode = 'manager';
+        this.isBackendAvailable = true;
+        console.log('✅ 重新连接到管理后端API成功');
+      }
+    }
+    
+    // 对于关键端点，即使后端不可用也尝试请求
+    const criticalEndpoints = ['/auth/login', '/auth/register', '/config', '/auth/status'];
+    const isCriticalEndpoint = criticalEndpoints.some(criticalEndpoint => 
+      endpoint.includes(criticalEndpoint)
+    );
+    
+    // 后端不可用且非关键端点则使用模拟数据
+    if (!this.isBackendAvailable && !isCriticalEndpoint) {
+      requestLog.usedMock = true;
+      requestLog.reason = 'backend_unavailable_non_critical';
+      this.logApiRequest(requestLog);
+      return this.getMockResponse(endpoint, options);
+    }
+
+    const url = `${this.baseURL}${endpoint}`;
+    const token = localStorage.getItem('eldercare_token');
+    
+    const config = {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+        ...options.headers
+      },
+      ...options
+    };
+
+    // 最大重试次数
+    let retries = 2; // 最多重试2次
+    
+    while (retries >= 0) {
+      try {
+        console.log(`🌐 API请求: ${config.method} ${url}`);
+        const startTime = Date.now();
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+          console.warn(`请求超时 (${timeoutDuration}ms): ${endpoint}`);
+          controller.abort('请求超时');  // 提供明确的中止原因
+        }, timeoutDuration);
+        
+        const response = await fetch(url, { ...config, signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        const endTime = Date.now();
+        requestLog.responseTime = endTime - startTime;
+        
+        if (!response.ok) {
+          // 如果是认证错误，不要重试
+          if (response.status === 401 || response.status === 403) {
+            requestLog.status = response.status;
+            requestLog.statusText = response.statusText;
+            requestLog.success = false;
+            requestLog.usedMock = true;
+            requestLog.reason = 'auth_error';
+            this.logApiRequest(requestLog);
+            
+            // 清除可能无效的token
+            if (endpoint.includes('/auth/') === false) {
+              console.warn('认证失败，清除token');
+              localStorage.removeItem('eldercare_token');
             }
-        } catch (error) {
-            console.error(`API请求失败 ${endpoint}:`, error);
-            return this.getMockData(endpoint, options);
-        }
-    }
-
-    getMockData(endpoint, options) {
-        // 根据endpoint返回对应的模拟数据
-        if (endpoint.includes('/auth/login')) {
-            return {
-                success: true,
-                message: '登录成功（模拟）',
-                user: {
-                    id: 1,
-                    username: 'demo_user',
-                    realName: '演示用户',
-                    elderName: '李奶奶',
-                    phone: '13812345678'
-                }
-            };
+            
+            throw new Error(`认证失败: HTTP ${response.status}: ${response.statusText}`);
+          }
+          
+          // 如果还有重试次数，继续重试
+          if (retries > 0) {
+            console.log(`请求失败，状态码: ${response.status}，将在1秒后重试，剩余重试次数: ${retries}`);
+            retries--;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          
+          requestLog.status = response.status;
+          requestLog.statusText = response.statusText;
+          requestLog.success = false;
+          requestLog.usedMock = true;
+          requestLog.reason = 'response_not_ok';
+          this.logApiRequest(requestLog);
+          
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
-        if (endpoint.includes('/auth/register')) {
-            return {
-                success: true,
-                message: '注册成功（模拟）',
-                user_id: Date.now()
-            };
-        }
-
-        if (endpoint.includes('/health/data')) {
-            return {
-                success: true,
-                data: this.generateMockHealthData()
-            };
-        }
-
-        if (endpoint.includes('/health/latest')) {
-            const latestData = this.generateMockHealthData();
-            return {
-                success: true,
-                data: latestData.length > 0 ? latestData[latestData.length - 1] : null
-            };
-        }
-
-        if (endpoint.includes('/voice/list')) {
-            return {
-                success: true,
-                data: [
-                    {
-                        id: 1,
-                        family_member_name: '小明',
-                        relationship: 'son',
-                        is_default: 1,
-                        is_active: 1,
-                        voice_file_path: '/temp/voice_xiaoming.wav',
-                        reference_text: '你好奶奶，我是小明，记得按时吃药哦。',
-                        created_at: new Date(Date.now() - 86400000).toISOString() // 1天前
-                    },
-                    {
-                        id: 2,
-                        family_member_name: '小红',
-                        relationship: 'daughter',
-                        is_default: 0,
-                        is_active: 1,
-                        voice_file_path: '/temp/voice_xiaohong.wav',
-                        reference_text: '奶奶，我是小红，今天天气很好，出去散散步吧。',
-                        created_at: new Date(Date.now() - 172800000).toISOString() // 2天前
-                    }
-                ]
-            };
-        }
-
-        if (endpoint.includes('/device/list')) {
-            return {
-                success: true,
-                data: [
-                    {
-                        id: 'esp32_001',
-                        device_name: '智能陪伴设备',
-                        status: 1,
-                        last_online: new Date().toISOString(),
-                        location: '客厅'
-                    }
-                ]
-            };
-        }
-
-        return { success: false, message: '未知的API端点' };
-    }
-
-    generateMockHealthData() {
-        const data = [];
-        const now = new Date();
+        const data = await response.json();
         
-        // 生成最近24小时的数据，每小时一条记录
-        for (let i = 23; i >= 0; i--) {
-            const date = new Date(now.getTime() - (i * 60 * 60 * 1000));
-            
-            // 模拟正常的健康指标变化
-            const baseHeartRate = 70;
-            const baseSystolic = 120;
-            const baseDiastolic = 80;
-            const baseTemp = 36.5;
-            const baseOxygen = 98;
-            
-            data.push({
-                id: Date.now() + i,
-                timestamp: date.toISOString(),
-                heart_rate: Math.round(baseHeartRate + (Math.random() - 0.5) * 20),
-                blood_pressure_systolic: Math.round(baseSystolic + (Math.random() - 0.5) * 20),
-                blood_pressure_diastolic: Math.round(baseDiastolic + (Math.random() - 0.5) * 15),
-                temperature: Number((baseTemp + (Math.random() - 0.5) * 0.8).toFixed(1)),
-                blood_oxygen: Math.round(baseOxygen + (Math.random() - 0.5) * 5),
-                activity_level: ['low', 'medium', 'high'][Math.floor(Math.random() * 3)]
-            });
-        }
+        requestLog.status = response.status;
+        requestLog.success = true;
+        requestLog.usedMock = false;
+        this.logApiRequest(requestLog);
+        
         return data;
-    }
-
-    // =========================== 认证相关API ===========================
-    
-    async register(userData) {
-        return await this.request('/auth/register', {
-            method: 'POST',
-            body: JSON.stringify(userData)
-        });
-    }
-
-    async login(username, password) {
-        const result = await this.request('/auth/login', {
-            method: 'POST',
-            body: JSON.stringify({ username, password })
-        });
-        
-        if (result.success && result.user) {
-            this.currentUser = result.user;
-            localStorage.setItem('eldercare_user', JSON.stringify(result.user));
+      } catch (error) {
+        // 如果是超时或网络错误且还有重试次数，继续重试
+        if ((error.name === 'AbortError' || error.name === 'TypeError') && retries > 0) {
+          console.log(`请求超时或网络错误，将在1秒后重试，剩余重试次数: ${retries}`);
+          retries--;
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
         }
         
-        return result;
-    }
-
-    logout() {
-        this.currentUser = null;
-        localStorage.removeItem('eldercare_user');
-        return { success: true, message: '退出成功' };
-    }
-
-    getCurrentUser() {
-        if (!this.currentUser) {
-            const stored = localStorage.getItem('eldercare_user');
-            if (stored) {
-                this.currentUser = JSON.parse(stored);
-            }
-        }
-        return this.currentUser;
-    }
-
-    // =========================== 健康数据API ===========================
-    
-    async saveHealthData(healthData) {
-        return await this.request('/health/save', {
-            method: 'POST',
-            body: JSON.stringify(healthData)
-        });
-    }
-
-    async getHealthData(userId, days = 7) {
-        return await this.request(`/health/data?user_id=${userId}&days=${days}`);
-    }
-
-    async getLatestHealthData(userId) {
-        return await this.request(`/health/latest?user_id=${userId}`);
-    }
-
-    // 获取监控数据（整合健康数据、提醒、紧急呼救等）
-    async getMonitorData(deviceId, days = 7) {
-        try {
-            // 获取健康数据
-            const healthResponse = await this.getHealthData(deviceId, days);
-            const healthData = healthResponse.success ? healthResponse.data : this.generateMockHealthData();
-
-            // 获取提醒数据
-            const reminders = await this.getReminders(deviceId);
-            const reminderData = reminders.success ? reminders.data : [];
-
-            // 模拟紧急呼救数据
-            const emergencyCalls = this.generateMockEmergencyCalls();
-
-            return {
-                success: true,
-                health_data: healthData,
-                reminders: reminderData,
-                emergency_calls: emergencyCalls
-            };
-        } catch (error) {
-            console.error('获取监控数据失败:', error);
-            return {
-                success: true, // 返回模拟数据
-                health_data: this.generateMockHealthData(),
-                reminders: [],
-                emergency_calls: []
-            };
-        }
-    }
-
-    // 获取设备状态
-    async getDeviceStatus(deviceId) {
-        try {
-            const response = await this.getUserDevices(deviceId);
-            if (response.success && response.data && response.data.length > 0) {
-                const device = response.data[0];
-                return {
-                    status: device.status === 1 ? 'online' : 'offline',
-                    last_activity: device.last_online ? new Date(device.last_online).toLocaleString('zh-CN') : '未知'
-                };
-            }
-        } catch (error) {
-            console.warn('获取设备状态失败:', error);
+        console.error(`API请求失败 ${endpoint}:`, error);
+        
+        // 记录错误信息
+        requestLog.error = error.message || (error.name === 'AbortError' ? '请求超时' : '请求失败');
+        requestLog.success = false;
+        requestLog.usedMock = true;
+        requestLog.reason = error.name === 'AbortError' ? 'timeout' : 'request_failed';
+        this.logApiRequest(requestLog);
+        
+        // 判断是否是关键端点
+        if (isCriticalRequest) {
+          // 为AbortError提供更明确的错误信息
+          if (error.name === 'AbortError') {
+            throw new Error(`请求超时(${timeoutDuration}ms): ${endpoint}`);
+          }
+          throw error;
         }
         
-        // 返回模拟状态
-        return {
-            status: 'online',
-            last_activity: '刚刚'
-        };
+        // 请求失败时降级到模拟数据
+        return this.getMockResponse(endpoint, options);
+      }
     }
-
-    generateMockEmergencyCalls() {
-        return [
-            {
-                id: 1,
-                timestamp: new Date(Date.now() - 86400000).toISOString(), // 1天前
-                notes: '检测到心率异常',
-                status: 'resolved'
-            },
-            {
-                id: 2,
-                timestamp: new Date(Date.now() - 172800000).toISOString(), // 2天前
-                notes: '紧急按钮被按下',
-                status: 'resolved'
-            }
-        ];
-    }
-
-    // =========================== 声音克隆API ===========================
+  }
+  
+  /**
+   * 记录API请求日志
+   */
+  logApiRequest(requestLog) {
+    // 保存到localStorage中
+    const apiRequestLogs = JSON.parse(localStorage.getItem('eldercare_api_request_logs') || '[]');
+    apiRequestLogs.unshift(requestLog); // 添加到开头
     
-    async saveVoiceClone(voiceData) {
-        return await this.request('/voice/save', {
-            method: 'POST',
-            body: JSON.stringify(voiceData)
-        });
+    // 最多保留100条记录
+    if (apiRequestLogs.length > 100) {
+      apiRequestLogs.pop();
     }
-
-    // 别名方法，与前端调用保持一致
-    async createVoiceClone(voiceData) {
-        return await this.saveVoiceClone(voiceData);
+    
+    localStorage.setItem('eldercare_api_request_logs', JSON.stringify(apiRequestLogs));
+    
+    // 如果使用了模拟数据，更新模拟数据使用记录
+    if (requestLog.usedMock) {
+      console.warn(`⚠️ 使用模拟数据: ${requestLog.endpoint} (原因: ${requestLog.reason})`);
     }
+  }
 
-    async getVoiceClones(userId) {
-        const response = await this.request(`/voice/list?user_id=${userId}`);
-        // 转换数据格式以匹配前端期望
-        if (response.success && response.data) {
-            return {
-                success: true,
-                voice_clones: response.data.map(item => ({
-                    id: item.id,
-                    family_member_name: item.family_member_name,
-                    relationship: item.relationship || 'family',
-                    is_active: item.is_active === 1,
-                    created_at: item.created_at || new Date().toISOString(),
-                    voice_file_path: item.voice_file_path,
-                    reference_text: item.reference_text
-                }))
-            };
+  /**
+   * 获取模拟数据响应
+   */
+  getMockResponse(endpoint, options) {
+    console.log(`📊 使用模拟数据: ${endpoint}`);
+    console.warn(`警告: 使用了模拟数据而非真实API - ${endpoint}`);
+    
+    // 将使用的模拟数据记录到localStorage中，用于诊断
+    const mockApiUsage = JSON.parse(localStorage.getItem('eldercare_mock_api_usage') || '{}');
+    mockApiUsage[endpoint] = {
+      timestamp: new Date().toISOString(),
+      method: options?.method || 'GET',
+      count: (mockApiUsage[endpoint]?.count || 0) + 1
+    };
+    localStorage.setItem('eldercare_mock_api_usage', JSON.stringify(mockApiUsage));
+    
+    // 认证相关
+    if (endpoint.includes('/auth/login')) {
+      return {
+        success: true,
+        code: 200,
+        message: '登录成功（模拟）',
+        data: {
+          id: 1,
+          username: 'demo_user',
+          realName: '演示用户',
+          elderName: '李奶奶',
+          phone: '13812345678',
+          token: 'mock_token_' + Date.now()
         }
-        return response;
+      };
     }
-
-    async getDefaultVoice(userId) {
-        return await this.request(`/voice/default?user_id=${userId}`);
-    }
-
-    async testVoiceSynthesis(voiceId, testText) {
-        return await this.request('/voice/test', {
-            method: 'POST',
-            body: JSON.stringify({ voice_id: voiceId, test_text: testText })
-        });
-    }
-
-    // 文件转Base64工具方法
-    async fileToBase64(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => {
-                const base64 = reader.result.split(',')[1]; // 去掉 data:audio/xxx;base64, 前缀
-                resolve(base64);
-            };
-            reader.onerror = error => reject(error);
-        });
-    }
-
-    // =========================== 设备管理API ===========================
     
-    async registerDevice(deviceData) {
-        return await this.request('/device/register', {
-            method: 'POST',
-            body: JSON.stringify(deviceData)
-        });
+    if (endpoint.includes('/auth/register')) {
+      return {
+        success: true,
+        code: 200,
+        message: '注册成功（模拟）',
+        data: { userId: Date.now() }
+      };
     }
 
-    async getUserDevices(userId) {
-        return await this.request(`/device/list?user_id=${userId}`);
+    // 监控数据
+    if (endpoint.includes('/monitor_data') || endpoint.includes('/monitor/data')) {
+      return {
+        success: true,
+        data: this.generateMockHealthData(),
+        emergency_calls: [],
+        health_data: this.generateMockHealthData(),
+        reminders: []
+      };
     }
-
-    // =========================== 系统配置API ===========================
     
-    async getSystemConfig(configKey = null) {
-        const url = configKey ? `/config?config_key=${configKey}` : '/config';
-        return await this.request(url);
+    // 健康数据
+    if (endpoint.includes('/health/data')) {
+      return {
+        success: true,
+        data: this.generateMockHealthData()
+      };
     }
-
-    // =========================== 紧急呼救API ===========================
     
-    async triggerEmergencyCall(userId, deviceId, callType = 'manual', location = null) {
-        const data = {
-            user_id: userId,
-            device_id: deviceId,
-            call_type: callType,
-            location: location,
-            timestamp: new Date().toISOString()
-        };
-        
-        console.log('🚨 紧急呼救触发:', data);
-        
-        // 模拟API调用
-        return {
-            success: true,
-            message: '紧急呼救已触发，正在通知家属...',
-            emergency_id: Date.now()
-        };
+    if (endpoint.includes('/health/latest')) {
+      const mockData = this.generateMockHealthData();
+      return {
+        success: true,
+        data: mockData.length > 0 ? mockData[0] : {}
+      };
     }
-
-    // =========================== 提醒系统API ===========================
     
-    async createReminder(reminderData) {
-        // 模拟创建提醒
-        const reminder = {
-            id: Date.now(),
-            ...reminderData,
+    if (endpoint.includes('/health/report')) {
+      return {
+        success: true,
+        data: {
+          report_id: Date.now(),
+          summary: "用户健康状况良好",
+          average_heart_rate: 75,
+          average_blood_pressure: "120/80",
+          details: "详细健康报告内容...",
+          generated_date: new Date().toISOString()
+        }
+      };
+    }
+    
+    // 提醒相关
+    if (endpoint.includes('/reminders') || endpoint.includes('/reminder/list')) {
+      return {
+        success: true,
+        data: [
+          {
+            id: 1,
+            title: '服药提醒',
+            content: '高血压药物，饭后服用',
+            reminder_type: 'medication',
+            scheduled_time: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+            repeat_interval: 'daily',
             is_completed: false,
-            create_date: new Date().toISOString()
-        };
-        
-        console.log('📅 创建提醒:', reminder);
-        
-        return {
-            success: true,
-            message: '提醒创建成功',
-            reminder: reminder
-        };
+            is_active: true,
+            created_at: new Date().toISOString()
+          },
+          {
+            id: 2,
+            title: '体检预约',
+            content: '社区医院例行检查',
+            reminder_type: 'appointment',
+            scheduled_time: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+            repeat_interval: 'none',
+            is_completed: false,
+            is_active: true,
+            created_at: new Date().toISOString()
+          }
+        ]
+      };
     }
-
-    // 别名方法，与前端调用保持一致
-    async createHealthReminder(reminderData) {
-        return await this.createReminder(reminderData);
-    }
-
-    async getReminders(userId) {
-        // 模拟获取提醒列表
-        const mockReminders = [
-            {
-                id: 1,
-                title: '服药提醒',
-                content: '记得按时服用降压药',
-                scheduled_time: new Date(Date.now() + 3600000).toISOString(), // 1小时后
-                reminder_type: 'medication',
-                is_completed: false
-            },
-            {
-                id: 2,
-                title: '运动提醒',
-                content: '今天天气不错，出去散散步吧',
-                scheduled_time: new Date(Date.now() + 7200000).toISOString(), // 2小时后
-                reminder_type: 'exercise',
-                is_completed: false
-            },
-            {
-                id: 3,
-                title: '体检提醒',
-                content: '下周三上午10点体检预约',
-                scheduled_time: new Date(Date.now() + 604800000).toISOString(), // 7天后
-                reminder_type: 'appointment',
-                is_completed: false
-            }
-        ];
-        
-        return {
-            success: true,
-            data: mockReminders
-        };
-    }
-
-    async markReminderComplete(reminderId) {
-        console.log('✅ 提醒完成:', reminderId);
-        return {
-            success: true,
-            message: '提醒已标记为完成'
-        };
-    }
-
-    // =========================== 扩展功能API ===========================
-
-    // 生成健康报告
-    async generateHealthReport(userId, startDate, endDate) {
-        const healthData = await this.getHealthData(userId, 30);
-        if (!healthData.success) {
-            return { success: false, message: '获取健康数据失败' };
+    
+    if (endpoint.includes('/reminder/create') || endpoint.includes('/reminder/update')) {
+      return {
+        success: true,
+        message: '操作成功',
+        data: {
+          id: Date.now(),
+          created_at: new Date().toISOString()
         }
-
-        const data = healthData.data;
-        const report = {
-            period: { startDate, endDate },
-            summary: {
-                totalRecords: data.length,
-                avgHeartRate: Math.round(data.reduce((sum, item) => sum + item.heart_rate, 0) / data.length),
-                avgBloodPressure: {
-                    systolic: Math.round(data.reduce((sum, item) => sum + item.blood_pressure_systolic, 0) / data.length),
-                    diastolic: Math.round(data.reduce((sum, item) => sum + item.blood_pressure_diastolic, 0) / data.length)
-                },
-                avgTemperature: (data.reduce((sum, item) => sum + item.temperature, 0) / data.length).toFixed(1),
-                avgBloodOxygen: Math.round(data.reduce((sum, item) => sum + item.blood_oxygen, 0) / data.length)
-            },
-            trends: {
-                heartRate: this.calculateTrend(data.map(item => item.heart_rate)),
-                bloodPressure: this.calculateTrend(data.map(item => item.blood_pressure_systolic)),
-                activity: this.analyzeActivityPattern(data)
-            },
-            alerts: this.generateHealthAlerts(data)
-        };
-
-        return {
-            success: true,
-            data: report
-        };
+      };
     }
 
-    calculateTrend(values) {
-        if (values.length < 2) return 'stable';
-        
-        const firstHalf = values.slice(0, Math.floor(values.length / 2));
-        const secondHalf = values.slice(Math.floor(values.length / 2));
-        
-        const firstAvg = firstHalf.reduce((sum, val) => sum + val, 0) / firstHalf.length;
-        const secondAvg = secondHalf.reduce((sum, val) => sum + val, 0) / secondHalf.length;
-        
-        const diff = secondAvg - firstAvg;
-        if (diff > 2) return 'increasing';
-        if (diff < -2) return 'decreasing';
-        return 'stable';
-    }
-
-    analyzeActivityPattern(data) {
-        const activityCounts = data.reduce((acc, item) => {
-            acc[item.activity_level] = (acc[item.activity_level] || 0) + 1;
-            return acc;
-        }, {});
-        
-        const total = data.length;
-        return {
-            low: ((activityCounts.low || 0) / total * 100).toFixed(1) + '%',
-            medium: ((activityCounts.medium || 0) / total * 100).toFixed(1) + '%',
-            high: ((activityCounts.high || 0) / total * 100).toFixed(1) + '%'
-        };
-    }
-
-    generateHealthAlerts(data) {
-        const alerts = [];
-        
-        const latestData = data[data.length - 1];
-        if (latestData.heart_rate > 100) {
-            alerts.push({ type: 'warning', message: '心率偏高，建议休息' });
+    // 设备状态
+    if (endpoint.includes('/device')) {
+      return {
+        success: true,
+        data: {
+          status: 'online',
+          last_activity: new Date().toISOString(),
+          device_name: '演示设备',
+          battery_level: 85
         }
-        if (latestData.blood_pressure_systolic > 140) {
-            alerts.push({ type: 'danger', message: '血压偏高，建议就医' });
-        }
-        if (latestData.blood_oxygen < 95) {
-            alerts.push({ type: 'warning', message: '血氧偏低，注意休息' });
-        }
-        
-        return alerts;
+      };
     }
+
+    // 智能体数据
+    if (endpoint.includes('/agent')) {
+      return {
+        success: true,
+        data: this.generateMockAgents()
+      };
+    }
+
+    // 声音克隆
+    if (endpoint.includes('/voice')) {
+      return {
+        success: true,
+        data: this.generateMockVoices()
+      };
+    }
+
+    // 默认成功响应
+    return {
+      success: true,
+      code: 200,
+      message: '操作成功（模拟）',
+      data: {}
+    };
+  }
+
+  /**
+   * 生成模拟健康数据
+   */
+  generateMockHealthData() {
+    const data = [];
+    const now = new Date();
+    
+    for (let i = 0; i < 24; i++) {
+      const timestamp = new Date(now.getTime() - i * 60 * 60 * 1000);
+      data.push({
+        id: i + 1,
+        device_id: 'demo-device-001',
+        timestamp: timestamp.toISOString(),
+        heart_rate: 70 + Math.floor(Math.random() * 20),
+        blood_pressure_systolic: 120 + Math.floor(Math.random() * 20),
+        blood_pressure_diastolic: 80 + Math.floor(Math.random() * 10),
+        temperature: 36.0 + Math.random() * 1.5,
+        blood_oxygen: 95 + Math.floor(Math.random() * 5),
+        activity_level: ['low', 'medium', 'high'][Math.floor(Math.random() * 3)],
+        fall_detected: Math.random() < 0.05 // 5%概率检测到跌倒
+      });
+    }
+    
+    return data;
+  }
+
+  /**
+   * 生成模拟智能体数据
+   */
+  generateMockAgents() {
+    return [
+      {
+        id: 1,
+        name: '小智助手',
+        description: '专业的养老陪伴智能体',
+        status: 'active',
+        voice_id: 'voice_001',
+        personality: 'caring',
+        created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+      },
+      {
+        id: 2,
+        name: '健康顾问',
+        description: '健康监测和建议专家',
+        status: 'active',
+        voice_id: 'voice_002',
+        personality: 'professional',
+        created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+      }
+    ];
+  }
+
+  /**
+   * 生成模拟声音数据
+   */
+  generateMockVoices() {
+    return [
+      {
+        id: 'voice_001',
+        name: '温柔女声',
+        description: '温暖亲切的女性声音',
+        language: 'zh-CN',
+        gender: 'female',
+        created_at: new Date().toISOString()
+      },
+      {
+        id: 'voice_002',
+        name: '稳重男声',
+        description: '沉稳可靠的男性声音',
+        language: 'zh-CN',
+        gender: 'male',
+        created_at: new Date().toISOString()
+      }
+    ];
+  }
+
+  // ===================== 业务API方法 =====================
+
+  /**
+   * 用户认证
+   */
+  async login(username, password) {
+    const result = await this.request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password })
+    });
+
+    if (result.success && result.data) {
+      this.currentUser = result.data;
+      localStorage.setItem('eldercare_user', JSON.stringify(result.data));
+      localStorage.setItem('eldercare_token', result.data.token || 'mock_token');
+      
+      // 确保返回格式正确，包含user属性
+      return {
+        success: true,
+        message: result.message || '登录成功',
+        user: result.data
+      };
+    }
+
+    return result;
+  }
+
+  async register(userData) {
+    // 使用通用请求方法
+    return this.request('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(userData)
+    });
+  }
+
+  logout() {
+    this.currentUser = null;
+    localStorage.removeItem('eldercare_user');
+    localStorage.removeItem('eldercare_token');
+  }
+
+  getCurrentUser() {
+    if (!this.currentUser) {
+      try {
+        const stored = localStorage.getItem('eldercare_user');
+        this.currentUser = stored ? JSON.parse(stored) : null;
+      } catch (error) {
+        console.error('解析用户数据失败:', error);
+        return null;
+      }
+    }
+    return this.currentUser;
+  }
+
+  /**
+   * 健康监控数据
+   */
+  async getMonitorData(deviceId, days = 7) {
+    return this.request(`/monitor/data?user_id=${deviceId}&days=${days}`);
+  }
+
+  async submitMonitorData(data) {
+    return this.request('/monitor/data', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+  }
+  
+  /**
+   * 获取健康数据
+   */
+  async getHealthData(userId, days = 7) {
+    return this.request(`/health/data?userId=${userId}&days=${days}`);
+  }
+  
+  /**
+   * 获取最新健康数据
+   */
+  async getLatestHealthData(userId) {
+    return this.request(`/health/latest?userId=${userId}`);
+  }
+  
+  /**
+   * 生成健康报告
+   */
+  async generateHealthReport(userId, startDate, endDate) {
+    return this.request(`/health/report?userId=${userId}&startDate=${startDate}&endDate=${endDate}`);
+  }
+
+  /**
+   * 设备管理
+   */
+  async getDeviceStatus(deviceId) {
+    return this.request(`/device/status?device_id=${deviceId}`);
+  }
+
+  async getUserDevices(userId) {
+    return this.request(`/device/list?user_id=${userId}`);
+  }
+
+  async registerDevice(deviceData) {
+    return this.request('/device/register', {
+      method: 'POST',
+      body: JSON.stringify(deviceData)
+    });
+  }
+
+  /**
+   * 智能体管理
+   */
+  async getAgents(userId) {
+    return this.request(`/agent/list?user_id=${userId}`);
+  }
+  
+  /**
+   * 获取用户智能体列表
+   */
+  async getUserAgents(userId) {
+    return this.request(`/agent/list?userId=${userId}`);
+  }
+
+  async createAgent(agentData) {
+    return this.request('/agent/create', {
+      method: 'POST',
+      body: JSON.stringify(agentData)
+    });
+  }
+
+  async updateAgent(agentId, agentData) {
+    return this.request(`/agent/update/${agentId}`, {
+      method: 'PUT',
+      body: JSON.stringify(agentData)
+    });
+  }
+
+  async deleteAgent(agentId) {
+    return this.request(`/agent/delete/${agentId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  /**
+   * 声音克隆
+   */
+  async getVoiceClones(userId) {
+    return this.request(`/voice/list?user_id=${userId}`);
+  }
+
+  async createVoiceClone(voiceData) {
+    return this.request('/voice/clone', {
+      method: 'POST',
+      body: JSON.stringify(voiceData)
+    });
+  }
+
+  /**
+   * 健康提醒
+   */
+  async createHealthReminder(reminder) {
+    return this.request('/reminders', {
+      method: 'POST',
+      body: JSON.stringify(reminder)
+    });
+  }
+
+  async getHealthReminders(userId) {
+    return this.request(`/reminders?user_id=${userId}`);
+  }
+  
+  /**
+   * 获取提醒数据
+   */
+  async get_reminders(userId) {
+    return this.request(`/reminders?user_id=${userId}`);
+  }
+
+  /**
+   * 紧急呼救
+   */
+  async emergencyCall(emergency) {
+    return this.request('/emergency_call', {
+      method: 'POST',
+      body: JSON.stringify(emergency)
+    });
+  }
+
+  /**
+   * 获取系统状态
+   */
+  getSystemStatus() {
+    return {
+      backend_mode: this.currentMode,
+      api_available: this.isBackendAvailable,
+      base_url: this.baseURL || 'mock',
+      user_logged_in: !!this.currentUser
+    };
+  }
+
+  /**
+   * 文件处理工具
+   */
+  async fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const base64 = reader.result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = error => reject(error);
+    });
+  }
 }
 
 // 创建单例实例

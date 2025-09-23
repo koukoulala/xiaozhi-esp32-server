@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import xiaozhi.modules.eldercare.dto.EcHealthDataDTO;
 import xiaozhi.modules.eldercare.service.EcHealthDataService;
+import xiaozhi.modules.eldercare.service.EcRemindersService;
 import xiaozhi.common.utils.Result;
 import xiaozhi.common.page.PageData;
 import xiaozhi.common.validator.AssertUtils;
@@ -15,6 +16,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.List;
+import java.util.HashMap;
+import java.util.ArrayList;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 /**
  * ElderCare健康数据控制器
@@ -29,6 +35,9 @@ public class EcHealthController {
 
     @Autowired
     private EcHealthDataService ecHealthDataService;
+
+    @Autowired
+    private EcRemindersService ecRemindersService;
 
     @GetMapping("page")
     @Operation(summary = "分页查询")
@@ -66,5 +75,44 @@ public class EcHealthController {
         AssertUtils.isArrayEmpty(ids, "id");
         ecHealthDataService.delete(ids);
         return new Result<String>().ok("删除成功");
+    }
+
+    // ========== 前端专用API ==========
+    
+    @GetMapping("/data")
+    @Operation(summary = "获取用户健康数据")
+    public Result<List<EcHealthDataDTO>> getUserHealthData(
+            @RequestParam("userId") Long userId,
+            @RequestParam(value = "days", defaultValue = "7") Integer days) {
+        
+        Map<String, Object> params = new HashMap<>();
+        params.put("user_id", userId);
+        params.put("days", days);
+        
+        List<EcHealthDataDTO> healthData = ecHealthDataService.getUserHealthData(params);
+        return new Result<List<EcHealthDataDTO>>().ok(healthData);
+    }
+
+    @GetMapping("/latest")
+    @Operation(summary = "获取用户最新健康数据")
+    public Result<EcHealthDataDTO> getLatestHealthData(@RequestParam("userId") Long userId) {
+        EcHealthDataDTO latestData = ecHealthDataService.getLatestByUserId(userId);
+        return new Result<EcHealthDataDTO>().ok(latestData);
+    }
+
+    @GetMapping("/report")
+    @Operation(summary = "生成健康报告")
+    public Result<Map<String, Object>> generateHealthReport(
+            @RequestParam("userId") Long userId,
+            @RequestParam("startDate") String startDate,
+            @RequestParam("endDate") String endDate) {
+        
+        Map<String, Object> params = new HashMap<>();
+        params.put("user_id", userId);
+        params.put("start_date", startDate);
+        params.put("end_date", endDate);
+        
+        Map<String, Object> report = ecHealthDataService.generateHealthReport(params);
+        return new Result<Map<String, Object>>().ok(report);
     }
 }

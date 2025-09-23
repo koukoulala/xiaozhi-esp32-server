@@ -6,6 +6,7 @@ import xiaozhi.modules.eldercare.entity.EcHealthDataEntity;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * ElderCare健康数据
@@ -24,4 +25,14 @@ public interface EcHealthDataService extends CrudService<EcHealthDataEntity, EcH
      * 获取用户最新的健康数据
      */
     EcHealthDataDTO getLatestByUserId(Long userId);
+
+    /**
+     * 根据参数获取用户健康数据（支持天数过滤）
+     */
+    List<EcHealthDataDTO> getUserHealthData(Map<String, Object> params);
+
+    /**
+     * 生成健康报告
+     */
+    Map<String, Object> generateHealthReport(Map<String, Object> params);
 }

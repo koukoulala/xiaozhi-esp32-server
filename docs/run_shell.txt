@@ -1,0 +1,13 @@
+cd /home/AzureVMCPU/xiaozhi-esp32-server/main/xiaozhi-server
+nohup python app.py > /tmp/server_log.txt 2>&1 &
+
+mvn spring-boot:run
+mvn spring-boot:run > manager-api.log 2>&1 &
+
+npm install
+npm run serve
+
+cd /home/AzureVMCPU/xiaozhi-esp32-server/main/eldercare-web
+npm run dev
+
+nohup python app.py > server.log 2>&1 &

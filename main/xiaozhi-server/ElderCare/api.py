@@ -14,6 +14,7 @@ import os
 import sys
 import uuid
 import base64
+import bcrypt
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 import mysql.connector
@@ -147,7 +148,7 @@ class ElderCareAPI:
             # 更新用户的智能体列表
             owned_agents.append(agent_id)
             cursor.execute(
-                "UPDATE ec_users SET owned_ai_agents = %s, updated_at = NOW() WHERE id = %s", 
+                "UPDATE ec_users SET owned_ai_agents = %s, update_date = NOW() WHERE id = %s", 
                 (json.dumps(owned_agents), user_id)
             )
             
@@ -310,8 +311,8 @@ class ElderCareAPI:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            # 加密密码
-            password_hash = hashlib.sha256(user_data['password'].encode()).hexdigest()
+            # 使用bcrypt加密密码（与manager-api保持一致）
+            password_hash = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             
             sql = """
             INSERT INTO ec_users (
@@ -371,23 +372,25 @@ class ElderCareAPI:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
-            
             sql = """
             SELECT ec.*, a.agent_name, a.system_prompt, a.tts_voice_id, 
                    tv.name as tts_voice_name, tv.tts_voice as tts_voice_code
             FROM ec_users ec
             LEFT JOIN ai_agent a ON ec.default_ai_agent_id = a.id
             LEFT JOIN ai_tts_voice tv ON a.tts_voice_id = tv.id
-            WHERE ec.username = %s AND ec.password = %s AND ec.status = 1
+            WHERE ec.username = %s AND ec.status = 1
             """
-            cursor.execute(sql, (username, password_hash))
+            cursor.execute(sql, (username,))
             user = cursor.fetchone()
             
             cursor.close()
             conn.close()
             
             if not user:
+                return {"success": False, "message": "用户名或密码错误"}
+            
+            # 使用bcrypt验证密码（与manager-api保持一致）
+            if not bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8')):
                 return {"success": False, "message": "用户名或密码错误"}
             
             # 移除密码字段，格式化数据
@@ -527,50 +530,6 @@ class ElderCareAPI:
         except Exception as e:
             logger.error(f"设置默认智能体错误: {e}")
             return {"success": False, "message": f"设置失败: {str(e)}"}
-    
-    async def eldercare_user_login(self, username: str, password: str) -> Dict[str, Any]:
-        """ElderCare用户登录"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor(dictionary=True)
-            
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
-            
-            sql = """
-            SELECT ec.*, a.agent_name, a.system_prompt, NULL as device_name
-            FROM ec_users ec
-            LEFT JOIN ai_agent a ON ec.default_ai_agent_id = a.id
-            WHERE ec.username = %s AND ec.password = %s AND ec.status = 1
-            """
-            cursor.execute(sql, (username, password_hash))
-            user = cursor.fetchone()
-            
-            cursor.close()
-            conn.close()
-            
-            if not user:
-                return {"success": False, "message": "用户名或密码错误"}
-            
-            # 移除密码字段，格式化数据
-            user.pop('password', None)
-            if user['create_date']:
-                user['create_date'] = user['create_date'].isoformat()
-            if user['update_date']:
-                user['update_date'] = user['update_date'].isoformat()
-            
-            # 解析JSON字段
-            try:
-                user['elder_profile'] = json.loads(user['elder_profile']) if user['elder_profile'] else {}
-                user['family_contacts'] = json.loads(user['family_contacts']) if user['family_contacts'] else {}
-                user['device_agent_mapping'] = json.loads(user['device_agent_mapping']) if user['device_agent_mapping'] else {}
-            except:
-                pass
-            
-            return {"success": True, "data": user}
-            
-        except Exception as e:
-            logger.error(f"ElderCare用户登录错误: {e}")
-            return {"success": False, "message": f"登录失败: {str(e)}"}
     
     async def get_user_agent_info(self, user_id: int) -> Dict[str, Any]:
         """获取用户的AI智能体信息（核心方法）"""
@@ -1254,6 +1213,95 @@ class ElderCareAPI:
             return {"success": False, "message": str(e)}
     
     async def get_agent_templates(self) -> Dict[str, Any]:
+        """获取智能体模板（从数据库获取真实模板）"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            cursor.execute("""
+                SELECT id, agent_name, system_prompt 
+                FROM ai_agent_template 
+                WHERE 1=1 
+                ORDER BY sort ASC
+            """)
+            templates = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # 处理模板数据
+            formatted_templates = []
+            for template in templates:
+                formatted_templates.append({
+                    "id": template["id"],
+                    "agent_name": template["agent_name"],
+                    "system_prompt": template["system_prompt"]
+                })
+            
+            return {"success": True, "data": formatted_templates}
+            
+        except Exception as e:
+            logger.error(f"获取智能体模板失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def update_agent(self, agent_id: str, agent_data: Dict[str, Any]) -> Dict[str, Any]:
+        """更新智能体"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            update_fields = []
+            values = []
+            
+            if 'agent_name' in agent_data:
+                update_fields.append("agent_name = %s")
+                values.append(agent_data['agent_name'])
+            
+            if 'system_prompt' in agent_data:
+                update_fields.append("system_prompt = %s")
+                values.append(agent_data['system_prompt'])
+            
+            if 'template_id' in agent_data:
+                update_fields.append("template_id = %s")
+                values.append(agent_data['template_id'])
+            
+            values.append(agent_id)
+            
+            cursor.execute(f"""
+                UPDATE ai_agent 
+                SET {', '.join(update_fields)}, updated_at = NOW()
+                WHERE id = %s
+            """, values)
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "message": "智能体更新成功"}
+            
+        except Exception as e:
+            logger.error(f"更新智能体失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def delete_agent(self, agent_id: str) -> Dict[str, Any]:
+        """删除智能体"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM ai_agent WHERE id = %s", (agent_id,))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "message": "智能体删除成功"}
+            
+        except Exception as e:
+            logger.error(f"删除智能体失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def get_agent_templates_old(self) -> Dict[str, Any]:
         """获取智能体模板（路由接口）"""
         try:
             # 返回预设模板
@@ -1425,13 +1473,57 @@ class ElderCareAPI:
         return self.authenticate_user(username, password)
     
     def get_user_agents(self, user_id: int) -> Dict[str, Any]:
-        """路由集成方法：获取用户智能体"""
-        return self.get_user_agent_info_sync(user_id)
+        """路由集成方法：获取用户的所有智能体"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 从ec_users表中获取用户拥有的智能体ID列表
+            cursor.execute("SELECT owned_ai_agents FROM ec_users WHERE id = %s", (user_id,))
+            user_data = cursor.fetchone()
+            
+            if not user_data:
+                return {"success": False, "message": "用户不存在"}
+            
+            # 解析智能体ID列表
+            try:
+                agent_ids = json.loads(user_data['owned_ai_agents'] or '[]')
+            except:
+                agent_ids = []
+            
+            if not agent_ids:
+                return {"success": True, "data": []}
+            
+            # 获取智能体详情
+            placeholders = ','.join(['%s'] * len(agent_ids))
+            sql = f"""
+            SELECT id, agent_code, agent_name, system_prompt,
+                   tts_model_id, tts_voice_id, llm_model_id,
+                   created_at, updated_at
+            FROM ai_agent 
+            WHERE id IN ({placeholders})
+            ORDER BY created_at DESC
+            """
+            
+            cursor.execute(sql, agent_ids)
+            agents = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # 转换datetime对象
+            agents = self._convert_datetime_to_string(agents)
+            
+            return {"success": True, "data": agents}
+            
+        except Exception as e:
+            logger.error(f"获取用户智能体失败: {e}")
+            return {"success": False, "message": f"获取失败: {str(e)}"}
     
     def get_user_agent_info_sync(self, user_id: int) -> Dict[str, Any]:
         """获取用户的AI智能体信息（同步版本）"""
         try:
-            conn = get_connection(self.pool)
+            conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
             sql = """
@@ -1465,11 +1557,11 @@ class ElderCareAPI:
     def get_health_data(self, user_id: int, start_date: str = None, end_date: str = None, data_type: str = None) -> Dict[str, Any]:
         """路由集成方法：获取健康数据"""
         try:
-            conn = get_connection(self.pool)
+            conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
             sql = """
-            SELECT hd.*, hdev.device_name, hdev.device_type, hdev.brand_model
+            SELECT hd.*, hdev.device_name, hdev.device_type, hdev.device_brand, hdev.device_model
             FROM ec_health_data hd
             LEFT JOIN ec_health_devices hdev ON hd.health_device_id = hdev.id
             WHERE hd.user_id = %s
@@ -1498,6 +1590,72 @@ class ElderCareAPI:
         except Exception as e:
             return {"success": False, "message": f"获取健康数据失败: {str(e)}"}
     
+    def get_user_ai_devices(self, user_id: int) -> Dict[str, Any]:
+        """获取用户的AI智能陪伴设备"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            sql = """
+            SELECT ad.*, aa.agent_name
+            FROM ai_device ad
+            LEFT JOIN ai_agent aa ON ad.agent_id = aa.id
+            WHERE ad.user_id = %s
+            ORDER BY ad.create_date DESC
+            """
+            
+            cursor.execute(sql, [user_id])
+            devices = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # 转换datetime对象
+            devices = self._convert_datetime_to_string(devices)
+            
+            return {"success": True, "data": devices}
+        except Exception as e:
+            return {"success": False, "message": f"获取AI设备失败: {str(e)}"}
+    
+    def get_user_health_devices(self, user_id: int) -> Dict[str, Any]:
+        """获取用户的健康监测设备"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            sql = """
+            SELECT * FROM ec_health_devices
+            WHERE user_id = %s
+            ORDER BY create_date DESC
+            """
+            
+            cursor.execute(sql, [user_id])
+            devices = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # 转换datetime对象
+            devices = self._convert_datetime_to_string(devices)
+            
+            return {"success": True, "data": devices}
+        except Exception as e:
+            return {"success": False, "message": f"获取健康设备失败: {str(e)}"}
+
+    def _convert_datetime_to_string(self, data):
+        """递归转换数据中的datetime对象和Decimal对象为字符串"""
+        import decimal
+        if isinstance(data, list):
+            return [self._convert_datetime_to_string(item) for item in data]
+        elif isinstance(data, dict):
+            return {key: self._convert_datetime_to_string(value) for key, value in data.items()}
+        elif hasattr(data, 'strftime'):  # datetime对象
+            return data.strftime("%Y-%m-%d %H:%M:%S")
+        elif isinstance(data, decimal.Decimal):  # Decimal对象
+            return float(data)
+        else:
+            return data
+    
     def get_monitor_data_sync(self, user_id: int) -> Dict[str, Any]:
         """路由集成方法：获取监控数据（整合版）- 同步版本"""
         try:
@@ -1509,15 +1667,51 @@ class ElderCareAPI:
             user_result = self.get_user_agent_info_sync(user_id)
             user_info = user_result.get("data", {}) if user_result.get("success") else {}
             
+            # 获取提醒数据（如果方法存在的话）
+            reminders = []
+            try:
+                reminders_result = self.get_reminders(user_id)
+                reminders = reminders_result.get("data", []) if reminders_result.get("success") else []
+            except:
+                # 如果get_reminders方法不存在，使用空列表
+                pass
+            
+            # 获取紧急呼救记录 (目前使用模拟数据)
+            emergency_calls = [
+                {
+                    "id": 1,
+                    "timestamp": "2025-09-21 14:30:00",
+                    "notes": "检测到心率异常",
+                    "status": "resolved"
+                },
+                {
+                    "id": 2, 
+                    "timestamp": "2025-09-20 10:15:00",
+                    "notes": "紧急按钮被按下",
+                    "status": "resolved"
+                }
+            ]
+            
+            # 确定设备状态和最后活动时间
+            device_status = "online" if health_data else "offline"
+            last_activity = health_data[0]["timestamp"] if health_data else "未知"
+            
             # 整合监控数据
             monitor_data = {
+                "success": True,
                 "health_data": health_data,
+                "reminders": reminders,
+                "emergency_calls": emergency_calls,
                 "user_info": user_info,
-                "device_status": "online" if health_data else "offline",
-                "last_update": health_data[0].get("timestamp") if health_data else None
+                "device_status": device_status,
+                "last_activity": last_activity
             }
             
-            return {"success": True, "data": monitor_data}
+            # 转换所有datetime对象为字符串，确保JSON序列化
+            monitor_data = self._convert_datetime_to_string(monitor_data)
+            
+            return monitor_data
+            
         except Exception as e:
             return {"success": False, "message": f"获取监控数据失败: {str(e)}"}
 

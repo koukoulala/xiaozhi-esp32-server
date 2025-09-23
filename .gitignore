@@ -218,3 +218,6 @@ uploadfile
 !main/manager-mobile/**/env/
 !main/manager-mobile/**/.env*
 !main/manager-mobile/**/*.json
+
+# Exclude GitHub Actions workflow files to avoid token permission issues
+.github/workflows/

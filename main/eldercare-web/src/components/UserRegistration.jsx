@@ -1,4 +1,3 @@
-// UserRegistration.jsx - 用户注册和设备绑定界面
 import React, { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
@@ -31,33 +30,37 @@ import {
 } from 'lucide-react'
 import ElderCareAPI from '@/services/api.js'
 
-const UserRegistration = ({ onRegistrationComplete }) => {
+const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
   const [currentStep, setCurrentStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
+  const [skipDeviceBinding, setSkipDeviceBinding] = useState(false)
   
   // 表单数据
   const [formData, setFormData] = useState({
-    // 基本信息
+    // 账号设置（第一步）
+    username: '',
+    password: '',
+    confirmPassword: '',
+    
+    // 老人基本信息（第二步）
     elderName: '',
     elderAge: '',
     elderGender: '',
     elderIdCard: '',
     elderPhone: '',
     
-    // 家属信息
+    // 家属信息（第三步）
     familyName: '',
     familyPhone: '',
     relationship: '',
     familyAddress: '',
     
-    // 健康档案
+    // 健康档案（第四步）
     chronicDiseases: [],
     medications: [],
     allergies: '',
-    emergencyContact: '',
-    emergencyPhone: '',
     
     // 健康基线
     baseHeartRate: '',
@@ -71,7 +74,7 @@ const UserRegistration = ({ onRegistrationComplete }) => {
     mealTimes: '',
     exerciseHabits: '',
     
-    // 设备信息
+    // 设备信息（第五步）
     deviceId: '',
     deviceName: '',
     installLocation: ''
@@ -94,12 +97,29 @@ const UserRegistration = ({ onRegistrationComplete }) => {
     
     switch (step) {
       case 1:
+        // 账号设置验证
+        if (!formData.username) {
+          setError('请填写用户名')
+          return false
+        }
+        if (!formData.password || formData.password.length < 6) {
+          setError('密码长度不能少于6个字符')
+          return false
+        }
+        if (formData.password !== formData.confirmPassword) {
+          setError('两次输入的密码不一致')
+          return false
+        }
+        break
+      case 2:
+        // 老人基本信息验证
         if (!formData.elderName || !formData.elderAge || !formData.elderGender) {
           setError('请填写老人基本信息')
           return false
         }
         break
-      case 2:
+      case 3:
+        // 家属信息验证
         if (!formData.familyName || !formData.familyPhone || !formData.relationship) {
           setError('请填写家属信息')
           return false
@@ -109,16 +129,13 @@ const UserRegistration = ({ onRegistrationComplete }) => {
           return false
         }
         break
-      case 3:
-        // 健康档案为可选项，但建议填写
-        if (!formData.emergencyContact || !formData.emergencyPhone) {
-          setError('请填写紧急联系人信息')
-          return false
-        }
-        break
       case 4:
-        if (!formData.deviceId || !deviceDiscovery.selectedDevice) {
-          setError('请选择并连接设备')
+        // 健康档案为可选项，可以直接通过
+        break
+      case 5:
+        // 设备绑定步骤验证
+        if (!skipDeviceBinding && (!formData.deviceId || !deviceDiscovery.selectedDevice)) {
+          setError('请选择并连接设备，或选择稍后绑定')
           return false
         }
         break
@@ -207,7 +224,7 @@ const UserRegistration = ({ onRegistrationComplete }) => {
   }
 
   const submitRegistration = async () => {
-    if (!validateStep(4)) return
+    if (!validateStep(5)) return
     
     setLoading(true)
     setError(null)
@@ -215,6 +232,8 @@ const UserRegistration = ({ onRegistrationComplete }) => {
     try {
       // 提交注册数据
       const registrationData = {
+        username: formData.username,
+        password: formData.password,
         elderInfo: {
           name: formData.elderName,
           age: parseInt(formData.elderAge),
@@ -232,8 +251,6 @@ const UserRegistration = ({ onRegistrationComplete }) => {
           chronicDiseases: formData.chronicDiseases,
           medications: formData.medications,
           allergies: formData.allergies,
-          emergencyContact: formData.emergencyContact,
-          emergencyPhone: formData.emergencyPhone,
           baseline: {
             heartRate: formData.baseHeartRate ? parseInt(formData.baseHeartRate) : null,
             bloodPressure: formData.baseBloodPressure,
@@ -247,12 +264,14 @@ const UserRegistration = ({ onRegistrationComplete }) => {
           mealTimes: formData.mealTimes,
           exerciseHabits: formData.exerciseHabits
         },
-        deviceInfo: {
+        deviceInfo: skipDeviceBinding ? null : {
           deviceId: formData.deviceId,
           deviceName: formData.deviceName,
           installLocation: formData.installLocation
         }
       }
+      
+      console.log('提交注册数据:', registrationData.username);
       
       const result = await ElderCareAPI.register(registrationData)
       
@@ -266,6 +285,7 @@ const UserRegistration = ({ onRegistrationComplete }) => {
       }
       
     } catch (err) {
+      console.error('注册失败:', err);
       setError(`注册失败: ${err.message}`)
     } finally {
       setLoading(false)
@@ -274,10 +294,11 @@ const UserRegistration = ({ onRegistrationComplete }) => {
 
   const getStepTitle = (step) => {
     const titles = {
-      1: '老人基本信息',
-      2: '家属联系信息', 
-      3: '健康档案配置',
-      4: '设备绑定配置'
+      1: '账号设置',
+      2: '老人基本信息',
+      3: '家属联系信息', 
+      4: '健康档案配置',
+      5: '设备绑定配置'
     }
     return titles[step]
   }
@@ -287,20 +308,70 @@ const UserRegistration = ({ onRegistrationComplete }) => {
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-2xl font-bold">用户注册</h2>
         <Badge variant="outline">
-          步骤 {currentStep}/4
+          步骤 {currentStep}/5
         </Badge>
       </div>
-      <Progress value={(currentStep / 4) * 100} className="mb-4" />
+      <Progress value={(currentStep / 5) * 100} className="mb-4" />
       <div className="flex justify-between text-sm text-muted-foreground">
-        <span className={currentStep >= 1 ? 'text-primary font-medium' : ''}>基本信息</span>
-        <span className={currentStep >= 2 ? 'text-primary font-medium' : ''}>家属信息</span>
-        <span className={currentStep >= 3 ? 'text-primary font-medium' : ''}>健康档案</span>
-        <span className={currentStep >= 4 ? 'text-primary font-medium' : ''}>设备绑定</span>
+        <span className={currentStep >= 1 ? 'text-primary font-medium' : ''}>账号设置</span>
+        <span className={currentStep >= 2 ? 'text-primary font-medium' : ''}>老人信息</span>
+        <span className={currentStep >= 3 ? 'text-primary font-medium' : ''}>家属信息</span>
+        <span className={currentStep >= 4 ? 'text-primary font-medium' : ''}>健康档案</span>
+        <span className={currentStep >= 5 ? 'text-primary font-medium' : ''}>设备绑定</span>
       </div>
     </div>
   )
 
+  // 新的第一步 - 账号设置
   const renderStep1 = () => (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center">
+          <Shield className="h-5 w-5 mr-2" />
+          账号设置
+        </CardTitle>
+        <CardDescription>
+          请设置您的登录账号和密码
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="username">用户名 *</Label>
+          <Input
+            id="username"
+            placeholder="请输入登录用户名"
+            value={formData.username}
+            onChange={(e) => updateFormData('username', e.target.value)}
+          />
+        </div>
+        
+        <div className="space-y-2">
+          <Label htmlFor="password">密码 *</Label>
+          <Input
+            id="password"
+            type="password"
+            placeholder="请输入登录密码（至少6位字符）"
+            value={formData.password}
+            onChange={(e) => updateFormData('password', e.target.value)}
+          />
+        </div>
+        
+        <div className="space-y-2">
+          <Label htmlFor="confirmPassword">确认密码 *</Label>
+          <Input
+            id="confirmPassword"
+            type="password"
+            placeholder="请再次输入登录密码"
+            value={formData.confirmPassword}
+            onChange={(e) => updateFormData('confirmPassword', e.target.value)}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  )
+  
+  // 第二步 - 老人基本信息
+  const renderStep2 = () => (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center">
@@ -373,7 +444,8 @@ const UserRegistration = ({ onRegistrationComplete }) => {
     </Card>
   )
 
-  const renderStep2 = () => (
+  // 第三步 - 家属联系信息
+  const renderStep3 = () => (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center">
@@ -434,35 +506,12 @@ const UserRegistration = ({ onRegistrationComplete }) => {
             onChange={(e) => updateFormData('familyAddress', e.target.value)}
           />
         </div>
-        
-        <Separator />
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="emergencyContact">紧急联系人 *</Label>
-            <Input
-              id="emergencyContact"
-              placeholder="紧急联系人姓名"
-              value={formData.emergencyContact}
-              onChange={(e) => updateFormData('emergencyContact', e.target.value)}
-            />
-          </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="emergencyPhone">紧急联系电话 *</Label>
-            <Input
-              id="emergencyPhone"
-              placeholder="紧急联系电话"
-              value={formData.emergencyPhone}
-              onChange={(e) => updateFormData('emergencyPhone', e.target.value)}
-            />
-          </div>
-        </div>
       </CardContent>
     </Card>
   )
 
-  const renderStep3 = () => (
+  // 第四步 - 健康档案配置
+  const renderStep4 = () => (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center">
@@ -610,7 +659,8 @@ const UserRegistration = ({ onRegistrationComplete }) => {
     </Card>
   )
 
-  const renderStep4 = () => (
+  // 第五步 - 设备发现与绑定
+  const renderStep5 = () => (
     <div className="space-y-6">
       <Card>
         <CardHeader>
@@ -619,69 +669,93 @@ const UserRegistration = ({ onRegistrationComplete }) => {
             设备发现与绑定
           </CardTitle>
           <CardDescription>
-            扫描并连接您的智慧养老设备
+            您可以现在绑定设备，也可以登录后再绑定
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">扫描附近设备</p>
-              <p className="text-sm text-muted-foreground">请确保设备已开机并处于配网模式</p>
+          <div className="flex items-center justify-between p-3 border rounded-lg">
+            <div className="flex items-center space-x-3">
+              <input
+                type="checkbox"
+                id="skipBinding"
+                checked={skipDeviceBinding}
+                onChange={(e) => setSkipDeviceBinding(e.target.checked)}
+                className="w-4 h-4"
+              />
+              <div>
+                <Label htmlFor="skipBinding" className="font-medium cursor-pointer">
+                  稍后绑定设备
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  跳过此步骤，登录后可在设备管理中绑定
+                </p>
+              </div>
             </div>
-            <Button 
-              onClick={scanDevices} 
-              disabled={deviceDiscovery.scanning}
-              variant="outline"
-            >
-              {deviceDiscovery.scanning ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  扫描中...
-                </>
-              ) : (
-                <>
-                  <Wifi className="h-4 w-4 mr-2" />
-                  扫描设备
-                </>
-              )}
-            </Button>
           </div>
 
-          {deviceDiscovery.discoveredDevices.length > 0 && (
-            <div className="space-y-3">
-              <Label>发现的设备</Label>
-              {deviceDiscovery.discoveredDevices.map((device) => (
-                <div
-                  key={device.id}
-                  className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                    deviceDiscovery.selectedDevice?.id === device.id
-                      ? 'border-primary bg-primary/5'
-                      : 'hover:bg-muted/50'
-                  }`}
-                  onClick={() => selectDevice(device)}
+          {!skipDeviceBinding && (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">扫描附近设备</p>
+                  <p className="text-sm text-muted-foreground">请确保设备已开机并处于配网模式</p>
+                </div>
+                <Button 
+                  onClick={scanDevices} 
+                  disabled={deviceDiscovery.scanning}
+                  variant="outline"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      <Smartphone className="h-5 w-5 text-muted-foreground" />
-                      <div>
-                        <p className="font-medium">{device.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          设备ID: {device.id} • 信号: {device.signal}dBm
-                        </p>
+                  {deviceDiscovery.scanning ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      扫描中...
+                    </>
+                  ) : (
+                    <>
+                      <Wifi className="h-4 w-4 mr-2" />
+                      扫描设备
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {deviceDiscovery.discoveredDevices.length > 0 && (
+                <div className="space-y-3">
+                  <Label>发现的设备</Label>
+                  {deviceDiscovery.discoveredDevices.map((device) => (
+                    <div
+                      key={device.id}
+                      className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                        deviceDiscovery.selectedDevice?.id === device.id
+                          ? 'border-primary bg-primary/5'
+                          : 'hover:bg-muted/50'
+                      }`}
+                      onClick={() => selectDevice(device)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <Smartphone className="h-5 w-5 text-muted-foreground" />
+                          <div>
+                            <p className="font-medium">{device.name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              设备ID: {device.id} • 信号: {device.signal}dBm
+                            </p>
+                          </div>
+                        </div>
+                        {deviceDiscovery.selectedDevice?.id === device.id && (
+                          <CheckCircle className="h-5 w-5 text-primary" />
+                        )}
                       </div>
                     </div>
-                    {deviceDiscovery.selectedDevice?.id === device.id && (
-                      <CheckCircle className="h-5 w-5 text-primary" />
-                    )}
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
 
-      {deviceDiscovery.selectedDevice && (
+      {!skipDeviceBinding && deviceDiscovery.selectedDevice && (
         <Card>
           <CardHeader>
             <CardTitle>设备配置</CardTitle>
@@ -757,6 +831,19 @@ const UserRegistration = ({ onRegistrationComplete }) => {
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="max-w-4xl mx-auto">
+        {/* 添加登录按钮 */}
+        <div className="flex justify-between items-center mb-4">
+          <div></div>
+          <Button 
+            variant="outline"
+            onClick={onSwitchToLogin}
+            className="flex items-center space-x-2"
+          >
+            <User className="h-4 w-4" />
+            <span>已有账户？去登录</span>
+          </Button>
+        </div>
+        
         {renderProgressBar()}
         
         {error && (
@@ -780,6 +867,7 @@ const UserRegistration = ({ onRegistrationComplete }) => {
           {currentStep === 2 && renderStep2()}
           {currentStep === 3 && renderStep3()}
           {currentStep === 4 && renderStep4()}
+          {currentStep === 5 && renderStep5()}
         </div>
         
         <div className="flex justify-between">
@@ -792,7 +880,7 @@ const UserRegistration = ({ onRegistrationComplete }) => {
             上一步
           </Button>
           
-          {currentStep < 4 ? (
+          {currentStep < 5 ? (
             <Button onClick={nextStep}>
               下一步
               <ArrowRight className="h-4 w-4 ml-2" />
@@ -800,7 +888,7 @@ const UserRegistration = ({ onRegistrationComplete }) => {
           ) : (
             <Button 
               onClick={submitRegistration}
-              disabled={loading || deviceDiscovery.connectionStatus !== 'connected'}
+              disabled={loading || (!skipDeviceBinding && deviceDiscovery.connectionStatus !== 'connected')}
             >
               {loading ? (
                 <>

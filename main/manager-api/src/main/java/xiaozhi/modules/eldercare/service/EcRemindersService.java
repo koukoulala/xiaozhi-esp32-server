@@ -7,6 +7,7 @@ import xiaozhi.common.utils.Result;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * ElderCare提醒管理服务
@@ -65,4 +66,9 @@ public interface EcRemindersService extends CrudService<EcRemindersEntity, EcRem
      * 恢复提醒
      */
     Result<String> resumeReminder(Long reminderId);
+
+    /**
+     * 根据参数获取用户提醒数据（支持天数过滤）
+     */
+    List<EcRemindersDTO> getUserReminders(Map<String, Object> params);
 }
