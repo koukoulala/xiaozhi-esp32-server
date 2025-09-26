@@ -9,5 +9,3 @@ npm run serve
 
 cd /home/AzureVMCPU/xiaozhi-esp32-server/main/eldercare-web
 npm run dev
-
-nohup python app.py > server.log 2>&1 &

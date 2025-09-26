@@ -49,7 +49,7 @@ class ElderCareAPI:
         try:
             self.connection_pool = pooling.MySQLConnectionPool(
                 pool_name="eldercare_pool",
-                pool_size=15,
+                pool_size=25,  # 增加连接池大小
                 pool_reset_session=True,
                 host=self.db_config['host'],
                 port=self.db_config['port'],
@@ -58,9 +58,13 @@ class ElderCareAPI:
                 database=self.db_config['database'],
                 charset='utf8mb4',
                 collation='utf8mb4_unicode_ci',
-                autocommit=True
+                autocommit=True,
+                # 添加连接超时设置
+                connection_timeout=10,  # 连接超时10秒
+                get_warnings=True,
+                raise_on_warnings=True
             )
-            logger.info("ElderCare数据库连接池初始化成功")
+            logger.info(f"ElderCare数据库连接池初始化成功 (连接池大小: 25)")
         except Exception as e:
             logger.error(f"ElderCare数据库连接池初始化失败: {e}")
             raise e
@@ -68,6 +72,26 @@ class ElderCareAPI:
     def get_connection(self):
         """从连接池获取数据库连接"""
         return self.connection_pool.get_connection()
+    
+    def execute_with_connection(self, operation_func, *args, **kwargs):
+        """执行数据库操作的统一方法，确保连接正确释放"""
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            return operation_func(cursor, *args, **kwargs)
+        except Exception as e:
+            logger.error(f"数据库操作错误: {e}")
+            raise e
+        finally:
+            try:
+                if cursor:
+                    cursor.close()
+                if conn:
+                    conn.close()
+            except Exception as cleanup_error:
+                logger.error(f"数据库连接清理错误: {cleanup_error}")
 
     # =========================== AI智能体管理（ElderCare用户权限控制）===========================
     
@@ -205,6 +229,117 @@ class ElderCareAPI:
             logger.error(f"获取默认模型配置错误: {e}")
             return {}
     
+    async def _create_agent_from_template(self, user_id: int, elder_info: Dict[str, Any]) -> Dict[str, Any]:
+        """使用ai_agent_template中的ElderCare模板创建智能体"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 获取ElderCare模板
+            cursor.execute(
+                "SELECT * FROM ai_agent_template WHERE agent_code = %s LIMIT 1",
+                ('ElderCare',)
+            )
+            template = cursor.fetchone()
+            
+            if not template:
+                cursor.close()
+                conn.close()
+                logger.error("ElderCare模板不存在")
+                return {"success": False, "message": "ElderCare模板不存在"}
+            
+            # 获取用户信息用于生成智能体代码和名称
+            cursor.execute("SELECT owned_ai_agents FROM ec_users WHERE id = %s", (user_id,))
+            user_info = cursor.fetchone()
+            
+            # 解析已有智能体列表
+            try:
+                owned_agents = json.loads(user_info.get('owned_ai_agents', '[]'))
+            except:
+                owned_agents = []
+            
+            # 生成AI Agent ID
+            agent_id = f"EC_{str(uuid.uuid4()).replace('-', '')[:24]}"
+            
+            # 超级管理员用户ID（用于creator和updater）
+            super_admin_id = 1959601708862038018
+            
+            # 生成个性化的智能体名称和代码
+            elder_name = elder_info.get('name', '老人')
+            agent_name = f"{elder_name}的智能助手"
+            agent_code = f"eldercare_{user_id}_{len(owned_agents)+1}"
+            
+            # 使用模板信息创建智能体，同时个性化系统提示词
+            system_prompt = self._get_default_eldercare_prompt({'elder_name': elder_name})
+            
+            # 创建AI智能体记录
+            sql = """
+            INSERT INTO ai_agent (
+                id, user_id, agent_code, agent_name, 
+                asr_model_id, vad_model_id, llm_model_id, vllm_model_id, 
+                tts_model_id, tts_voice_id, mem_model_id, intent_model_id,
+                system_prompt, summary_memory, 
+                chat_history_conf, lang_code, language, sort,
+                creator, created_at, updater, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, 
+                %s, %s, %s, %s, 
+                %s, %s, %s, %s,
+                %s, %s, 
+                %s, %s, %s, %s,
+                %s, NOW(), %s, NOW()
+            )
+            """
+            
+            cursor.execute(sql, (
+                agent_id,
+                super_admin_id,  # 使用超级管理员ID作为技术所有者
+                agent_code,
+                agent_name,
+                
+                # 使用模板中的模型配置
+                template.get('asr_model_id'),
+                template.get('vad_model_id'), 
+                template.get('llm_model_id'),
+                template.get('vllm_model_id'),
+                template.get('tts_model_id'),
+                template.get('tts_voice_id'),
+                template.get('mem_model_id'),
+                template.get('intent_model_id'),
+                
+                system_prompt,
+                template.get('summary_memory', ''),
+                template.get('chat_history_conf', 1),
+                template.get('lang_code', 'zh-CN'),
+                template.get('language', 'zh-CN'),
+                len(owned_agents),
+                super_admin_id,
+                super_admin_id
+            ))
+            
+            # 更新用户的智能体列表
+            owned_agents.append(agent_id)
+            cursor.execute(
+                "UPDATE ec_users SET owned_ai_agents = %s, default_ai_agent_id = %s, update_date = NOW() WHERE id = %s", 
+                (json.dumps(owned_agents), agent_id, user_id)
+            )
+            
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"为用户{user_id}从ElderCare模板创建AI智能体成功: {agent_id}")
+            return {
+                "success": True, 
+                "message": "AI智能体创建成功", 
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "template_id": template['id']
+            }
+            
+        except Exception as e:
+            logger.error(f"从ElderCare模板创建AI智能体错误: {e}")
+            return {"success": False, "message": f"创建失败: {str(e)}"}
+    
     def _get_default_eldercare_prompt(self, user_info: Dict[str, Any]) -> str:
         """生成默认的ElderCare系统提示词"""
         elder_name = user_info.get('elder_name', '老人家')
@@ -314,49 +449,67 @@ class ElderCareAPI:
             # 使用bcrypt加密密码（与manager-api保持一致）
             password_hash = bcrypt.hashpw(user_data['password'].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             
+            # 处理前端发送的嵌套数据结构
+            elder_info = user_data.get('elderInfo', {})
+            family_info = user_data.get('familyInfo', {})
+            health_profile = user_data.get('healthProfile', {})
+            life_habits = user_data.get('lifeHabits', {})
+            device_info = user_data.get('deviceInfo', {})
+            
+            # 构建elder_profile JSON
+            elder_profile = {
+                'name': elder_info.get('name', ''),
+                'age': elder_info.get('age'),
+                'gender': elder_info.get('gender', ''),
+                'idCard': elder_info.get('idCard', ''),
+                'phone': elder_info.get('phone', ''),
+                'healthProfile': health_profile,
+                'lifeHabits': life_habits,
+                'deviceInfo': device_info
+            }
+            
+            # 构建family_contacts JSON
+            family_contacts = {
+                'primary': {
+                    'name': family_info.get('name', ''),
+                    'phone': family_info.get('phone', ''),
+                    'relationship': family_info.get('relationship', ''),
+                    'address': family_info.get('address', '')
+                }
+            }
+            
             sql = """
             INSERT INTO ec_users (
-                ai_user_id, username, password, real_name, phone, email,
+                username, password, real_name, phone, email,
                 elder_name, elder_relation, elder_profile, family_contacts,
-                default_ai_agent_id, owned_ai_agents, agent_creation_limit, can_modify_models, permission_level,
                 status, create_date, update_date
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, NOW(), NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 1, NOW(), NOW())
             """
             
             cursor.execute(sql, (
-                user_data.get('ai_user_id'),  # 可选的高级用户关联
                 user_data['username'],
                 password_hash,
-                user_data.get('real_name', ''),
-                user_data.get('phone', ''),
+                family_info.get('name', ''),
+                family_info.get('phone', ''),
                 user_data.get('email', ''),
-                user_data.get('elder_name', ''),
-                user_data.get('elder_relation', 'family'),
-                json.dumps(user_data.get('elder_profile', {}), ensure_ascii=False),
-                json.dumps(user_data.get('family_contacts', {}), ensure_ascii=False),
-                None,  # default_ai_agent_id，稍后创建
-                '[]',  # owned_ai_agents，空数组
-                user_data.get('agent_creation_limit', 3),
-                user_data.get('can_modify_models', 0),  # 默认不允许修改模型
-                user_data.get('permission_level', 'eldercare')
+                elder_info.get('name', ''),
+                family_info.get('relationship', 'family'),
+                json.dumps(elder_profile, ensure_ascii=False),
+                json.dumps(family_contacts, ensure_ascii=False)
             ))
             
             user_id = cursor.lastrowid
             cursor.close()
             conn.close()
             
-            # 自动创建默认AI智能体
+            # 自动创建默认AI智能体，使用ai_agent_template中的ElderCare模板
             if user_data.get('create_default_agent', True):
-                agent_result = await self.create_eldercare_ai_agent(user_id, {
-                    'agent_name': f"{user_data.get('elder_name', '老人')}的智能助手",
-                    'system_prompt': None,  # 使用默认提示词
-                    'tts_voice_id': user_data.get('preferred_tts_voice_id')  # 可选的偏好音色
-                })
+                agent_result = await self._create_agent_from_template(user_id, elder_info)
                 
                 if not agent_result['success']:
                     logger.warning(f"用户{user_id}注册成功但默认智能体创建失败: {agent_result['message']}")
             
-            logger.info(f"ElderCare用户注册成功: {user_data['username']}")
+            logger.info(f"ElderCare用户注册成功: {user_data['username']} (ID: {user_id})")
             return {"success": True, "message": "用户注册成功", "user_id": user_id}
             
         except mysql.connector.IntegrityError as e:
@@ -518,10 +671,11 @@ class ElderCareAPI:
             
             # 更新默认智能体
             cursor.execute(
-                "UPDATE ec_users SET default_ai_agent_id = %s, updated_at = NOW() WHERE id = %s", 
+                "UPDATE ec_users SET default_ai_agent_id = %s WHERE id = %s", 
                 (agent_id, user_id)
             )
             
+            conn.commit()
             cursor.close()
             conn.close()
             
@@ -848,6 +1002,605 @@ class ElderCareAPI:
             logger.error(f"删除声音克隆错误: {e}")
             return {"success": False, "message": f"删除失败: {str(e)}"}
 
+    # 同步方法别名，兼容路由调用
+    def get_voice_clones(self, user_id: int, agent_id: str = None) -> Dict[str, Any]:
+        """获取用户声音克隆列表（根据用户ID和智能体ID）"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 如果没有指定agent_id，获取用户的默认智能体
+            if not agent_id:
+                cursor.execute("SELECT default_ai_agent_id FROM ec_users WHERE id = %s", (user_id,))
+                user_result = cursor.fetchone()
+                
+                if not user_result or not user_result['default_ai_agent_id']:
+                    # 如果没有默认智能体，返回该用户所有的声音克隆
+                    sql = """
+                    SELECT v.id, v.name, v.reference_audio, v.reference_text, 
+                           v.creator, v.updater, v.tts_model_id, v.create_date, v.update_date, v.remark
+                    FROM ai_tts_voice v
+                    WHERE v.creator = %s
+                    ORDER BY v.create_date DESC
+                    """
+                    cursor.execute(sql, (user_id,))
+                    voice_clones = cursor.fetchall()
+                else:
+                    agent_id = user_result['default_ai_agent_id']
+            
+            # 如果有agent_id，根据智能体获取tts_model_id
+            if agent_id:
+                cursor.execute("SELECT tts_model_id FROM ai_agent WHERE id = %s", (agent_id,))
+                agent_result = cursor.fetchone()
+                
+                if not agent_result:
+                    return {"success": False, "message": "智能体不存在"}
+                
+                tts_model_id = agent_result['tts_model_id'] or 'TTS_CosyVoiceClone302AI'
+                
+                # 根据tts_model_id和creator获取音色列表
+                sql = """
+                SELECT v.id, v.name, v.reference_audio, v.reference_text, 
+                       v.creator, v.updater, v.tts_model_id, v.create_date, v.update_date, v.remark
+                FROM ai_tts_voice v
+                WHERE v.tts_model_id = %s AND v.creator = %s
+                ORDER BY v.create_date DESC
+                """
+                
+                cursor.execute(sql, (tts_model_id, user_id))
+                voice_clones = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # 格式化数据
+            for clone in voice_clones:
+                if clone['create_date']:
+                    clone['create_date'] = clone['create_date'].isoformat()
+                if clone['update_date']:
+                    clone['update_date'] = clone['update_date'].isoformat()
+                
+                # 解析备注信息获取家庭成员信息
+                remark = clone.get('remark', '')
+                family_info = self._parse_family_info_from_remark(remark)
+                clone.update(family_info)
+                
+                # 检查音频文件是否存在
+                reference_audio = clone.get('reference_audio', '')
+                if reference_audio:
+                    audio_full_path = os.path.join(current_dir, '../../../', reference_audio.lstrip('/'))
+                    clone['audio_file_exists'] = os.path.exists(audio_full_path)
+                    if clone['audio_file_exists']:
+                        try:
+                            clone['audio_file_size'] = os.path.getsize(audio_full_path)
+                        except:
+                            clone['audio_file_size'] = 0
+                else:
+                    clone['audio_file_exists'] = False
+                    clone['audio_file_size'] = 0
+            
+            return {"success": True, "data": voice_clones}
+            
+        except Exception as e:
+            logger.error(f"获取声音克隆列表错误: {e}")
+            return {"success": False, "message": f"获取失败: {str(e)}"}
+
+    def upload_voice_recording_sync(self, recording_data: Dict[str, Any]) -> Dict[str, Any]:
+        """处理网页录音上传（Base64格式）- 同步版本"""
+        try:
+            user_id = recording_data['user_id']
+            audio_base64 = recording_data['audio_data']  # Base64编码的音频数据
+            audio_format = recording_data.get('format', 'wav')
+            family_member_name = recording_data.get('family_member_name', '家人')
+            relationship = recording_data.get('relationship', 'family')
+            
+            # 验证Base64数据
+            if not audio_base64 or not audio_base64.startswith('data:audio/'):
+                return {"success": False, "message": "无效的音频数据格式"}
+            
+            # 解析Base64数据
+            try:
+                # 格式: data:audio/wav;base64,XXXXX
+                header, audio_data = audio_base64.split(',', 1)
+                audio_bytes = base64.b64decode(audio_data)
+            except:
+                return {"success": False, "message": "音频数据解码失败"}
+            
+            # 生成文件名和保存路径
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"eldercare_voice_{user_id}_{timestamp}.{audio_format}"
+            
+            # 确保上传目录存在
+            upload_dir = os.path.join(current_dir, '../../../data/audio_uploads/reference')
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(upload_dir, filename)
+            
+            # 保存音频文件
+            with open(file_path, 'wb') as f:
+                f.write(audio_bytes)
+            
+            # 创建声音克隆记录
+            voice_clone_data = {
+                'user_id': user_id,
+                'voice_name': f'{family_member_name}的声音',
+                'family_member_name': family_member_name,
+                'relationship': relationship,
+                'reference_audio': f'/data/audio_uploads/reference/{filename}',
+                'reference_text': recording_data.get('reference_text', '您好，我是您的家人，这是我的普通话测试部分。'),
+                'languages': '中文'
+            }
+            
+            # 调用创建声音克隆
+            result = self.create_voice_clone_sync(voice_clone_data)
+            
+            if result['success']:
+                result['audio_file_path'] = f'/data/audio_uploads/reference/{filename}'
+                result['audio_size'] = len(audio_bytes)
+                result['duration_estimate'] = len(audio_bytes) / 16000  # 粗略估算（假设16kHz采样率）
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"上传录音错误: {e}")
+            return {"success": False, "message": f"上传失败: {str(e)}"}
+
+    def create_voice_clone_sync(self, voice_data: Dict[str, Any]) -> Dict[str, Any]:
+        """为用户创建新的声音克隆（同步版本）"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # 生成新的音色ID
+            voice_id = f"TTS_ElderCare_{str(uuid.uuid4()).replace('-', '')[:16]}"
+            
+            # 获取用户的当前TTS模型ID - 使用同步版本
+            user_agent_info = self.get_user_agent_info_sync(voice_data['user_id'])
+            if not user_agent_info.get('success'):
+                return {"success": False, "message": "获取用户AI智能体信息失败"}
+            
+            tts_model_id = user_agent_info['data'].get('tts_model_id', 'TTS_CosyVoiceClone302AI')
+            
+            # 在ai_tts_voice表中插入新的音色记录
+            sql = """
+            INSERT INTO ai_tts_voice (
+                id, tts_model_id, name, tts_voice, languages, voice_demo,
+                reference_audio, reference_text, remark, sort, creator, create_date, updater, update_date
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, NOW())
+            """
+            
+            cursor.execute(sql, (
+                voice_id,
+                tts_model_id,  # 使用智能体真实的TTS模型ID
+                voice_data.get('voice_name', '家人音色'),
+                voice_data.get('voice_code', voice_id.lower()),
+                voice_data.get('languages', '中文'),
+                voice_data.get('voice_demo', ''),  # 可以存储测试音频URL
+                voice_data.get('reference_audio', ''),  # 参考音频文件路径
+                voice_data.get('reference_text', '您好，我是您的家人，这是我的普通话测试部分。'),
+                f"ElderCare用户{voice_data['user_id']}的家人音色 - {voice_data.get('family_member_name', '未知')}({voice_data.get('relationship', 'family')})",
+                voice_data.get('sort', 999),
+                voice_data['user_id'],
+                voice_data['user_id']
+            ))
+            
+            cursor.close()
+            conn.close()
+            
+            return {
+                "success": True, 
+                "message": "声音克隆创建成功", 
+                "voice_id": voice_id,
+                "tts_model_id": tts_model_id
+            }
+            
+        except Exception as e:
+            logger.error(f"创建声音克隆错误: {e}")
+            return {"success": False, "message": f"创建失败: {str(e)}"}
+
+    def get_user_agent_info_sync(self, user_id: int) -> Dict[str, Any]:
+        """获取用户的AI智能体信息（同步版本）"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            sql = """
+            SELECT u.default_ai_agent_id, NULL as current_ai_device_id,
+                   a.agent_name, a.tts_model_id, a.tts_voice_id,
+                   tm.model_name as tts_model_name, tv.name as tts_voice_name
+            FROM ec_users u
+            LEFT JOIN ai_agent a ON u.default_ai_agent_id = a.id
+            LEFT JOIN ai_model_config tm ON a.tts_model_id = tm.id
+            LEFT JOIN ai_tts_voice tv ON a.tts_voice_id = tv.id
+            WHERE u.id = %s
+            """
+            
+            cursor.execute(sql, (user_id,))
+            agent_info = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if agent_info:
+                return {"success": True, "data": agent_info}
+            else:
+                return {"success": False, "message": "用户不存在或未配置AI智能体"}
+            
+        except Exception as e:
+            logger.error(f"获取用户智能体信息错误: {e}")
+            return {"success": False, "message": f"获取失败: {str(e)}"}
+
+    def create_voice_clone_from_frontend(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """从前端格式创建声音克隆（同步版本）"""
+        try:
+            # 检查是否是录音上传格式
+            if 'audio_data' in data:
+                return self.upload_voice_recording_sync(data)
+            elif 'audio_file_path' in data:
+                # 处理文件上传格式
+                return self.create_voice_clone_from_file(data)
+            else:
+                return self.create_voice_clone_sync(data)
+        except Exception as e:
+            logger.error(f"创建声音克隆错误: {e}")
+            return {"success": False, "message": f"创建失败: {str(e)}"}
+
+    def create_voice_clone_from_file(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """从文件路径创建声音克隆 - 保存到ai_tts_voice表"""
+        try:
+            import uuid
+            from datetime import datetime
+            import shutil
+            
+            # 获取参数
+            user_id = int(data.get('userId', 1))
+            voice_name = data.get('name', '未命名音色')
+            reference_text = data.get('referenceText', '')
+            audio_file_path = data.get('audio_file_path')
+            family_member_name = data.get('family_member_name', voice_name)
+            relationship = data.get('relationship', 'family')
+            agent_id = data.get('agent_id')  # 获取指定的智能体ID
+            
+            if not audio_file_path or not os.path.exists(audio_file_path):
+                return {"success": False, "message": "音频文件不存在"}
+            
+            # 获取数据库连接
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 获取tts_model_id
+            tts_model_id = 'TTS_CosyVoiceClone302AI'  # 默认值
+            
+            if agent_id:
+                # 如果指定了智能体ID，获取其tts_model_id
+                cursor.execute("SELECT tts_model_id FROM ai_agent WHERE id = %s", (agent_id,))
+                agent_result = cursor.fetchone()
+                if agent_result and agent_result['tts_model_id']:
+                    tts_model_id = agent_result['tts_model_id']
+            else:
+                # 如果没有指定智能体，获取用户的默认智能体
+                cursor.execute("SELECT default_ai_agent_id FROM ec_users WHERE id = %s", (user_id,))
+                user_result = cursor.fetchone()
+                
+                if user_result and user_result['default_ai_agent_id']:
+                    cursor.execute("SELECT tts_model_id FROM ai_agent WHERE id = %s", 
+                                 (user_result['default_ai_agent_id'],))
+                    agent_result = cursor.fetchone()
+                    if agent_result and agent_result['tts_model_id']:
+                        tts_model_id = agent_result['tts_model_id']
+            
+            # 生成唯一的文件名
+            file_extension = os.path.splitext(audio_file_path)[1] or '.webm'
+            unique_filename = f"user_{user_id}_{uuid.uuid4().hex[:12]}{file_extension}"
+            
+            # 设置目标文件路径
+            voice_dir = os.path.join(current_dir, '..', '..', 'xiaozhi-server', 'data', 'voices')
+            os.makedirs(voice_dir, exist_ok=True)
+            target_path = os.path.join(voice_dir, unique_filename)
+            
+            # 移动音频文件到目标位置
+            shutil.move(audio_file_path, target_path)
+            
+            # 生成voice_id（确保长度不超过数据库限制）
+            voice_id = f"TTS_User{user_id}_{uuid.uuid4().hex[:8]}"
+            
+            # 生成remark字段（包含家庭成员信息）
+            remark_data = {
+                'family_member_name': family_member_name,
+                'relationship': relationship,
+                'voice_description': f'{family_member_name}的声音'
+            }
+            remark = json.dumps(remark_data, ensure_ascii=False)
+            
+            # 插入到ai_tts_voice表
+            insert_sql = """
+            INSERT INTO ai_tts_voice 
+            (id, name, reference_audio, reference_text, creator, updater, tts_model_id, 
+             create_date, update_date, remark)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            
+            now = datetime.now()
+            # 使用相对路径存储（相对于项目根目录）
+            relative_audio_path = f"data/voices/{unique_filename}"
+            
+            cursor.execute(insert_sql, (
+                voice_id, voice_name, relative_audio_path, reference_text, 
+                user_id, user_id, tts_model_id, now, now, remark
+            ))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return {
+                "success": True, 
+                "message": "音色上传成功",
+                "data": {
+                    "voice_id": voice_id,
+                    "name": voice_name,
+                    "reference_audio": relative_audio_path,
+                    "reference_text": reference_text,
+                    "family_member_name": family_member_name,
+                    "relationship": relationship,
+                    "tts_model_id": tts_model_id
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"创建音色失败: {e}")
+            return {"success": False, "message": f"创建失败: {str(e)}"}
+
+    def save_voice_clone(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """保存声音克隆（同步版本）"""
+        try:
+            # 检查是否是录音上传格式
+            if 'audio_data' in data:
+                return self.upload_voice_recording_sync(data)
+            else:
+                return self.create_voice_clone_sync(data)
+        except Exception as e:
+            logger.error(f"保存声音克隆错误: {e}")
+            return {"success": False, "message": f"保存失败: {str(e)}"}
+
+    def get_default_voice(self, user_id: int) -> Dict[str, Any]:
+        """获取用户默认声音（同步版本）"""
+        try:
+            result = self.get_user_agent_info_sync(user_id)
+            
+            if result.get('success'):
+                agent_data = result.get('data', {})
+                return {
+                    "success": True,
+                    "data": {
+                        "tts_voice_id": agent_data.get('tts_voice_id'),
+                        "tts_voice_name": agent_data.get('tts_voice_name'),
+                        "tts_model_name": agent_data.get('tts_model_name')
+                    }
+                }
+            else:
+                return result
+        except Exception as e:
+            logger.error(f"获取默认声音错误: {e}")
+            return {"success": False, "message": f"获取失败: {str(e)}"}
+
+    def set_default_voice(self, user_id: int, voice_id: str) -> Dict[str, Any]:
+        """设置默认音色"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 获取用户的默认智能体
+            cursor.execute("SELECT default_ai_agent_id FROM ec_users WHERE id = %s", (user_id,))
+            user_result = cursor.fetchone()
+            
+            if not user_result or not user_result['default_ai_agent_id']:
+                return {"success": False, "message": "用户没有默认智能体"}
+            
+            agent_id = user_result['default_ai_agent_id']
+            
+            # 验证音色是否存在且属于用户
+            cursor.execute("SELECT * FROM ai_tts_voice WHERE id = %s AND creator = %s", (voice_id, user_id))
+            voice_result = cursor.fetchone()
+            
+            if not voice_result:
+                return {"success": False, "message": "音色不存在或无权限"}
+            
+            # 更新智能体的默认音色
+            cursor.execute("UPDATE ai_agent SET tts_voice_id = %s WHERE id = %s", (voice_id, agent_id))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "message": "默认音色设置成功"}
+            
+        except Exception as e:
+            logger.error(f"设置默认音色失败: {e}")
+            return {"success": False, "message": f"设置失败: {str(e)}"}
+
+    def delete_voice(self, user_id: int, voice_id: str) -> Dict[str, Any]:
+        """删除音色"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 验证音色是否存在且属于用户
+            cursor.execute("SELECT * FROM ai_tts_voice WHERE id = %s AND creator = %s", (voice_id, user_id))
+            voice_result = cursor.fetchone()
+            
+            if not voice_result:
+                return {"success": False, "message": "音色不存在或无权限"}
+            
+            # 删除音频文件
+            if voice_result.get('reference_audio') and os.path.exists(voice_result['reference_audio']):
+                try:
+                    os.remove(voice_result['reference_audio'])
+                except:
+                    pass  # 文件删除失败不影响数据库删除
+            
+            # 删除数据库记录
+            cursor.execute("DELETE FROM ai_tts_voice WHERE id = %s", (voice_id,))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "message": "音色删除成功"}
+            
+        except Exception as e:
+            logger.error(f"删除音色失败: {e}")
+            return {"success": False, "message": f"删除失败: {str(e)}"}
+
+    def update_voice(self, user_id: int, voice_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """编辑音色"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 验证音色是否存在且属于用户
+            cursor.execute("SELECT * FROM ai_tts_voice WHERE id = %s AND creator = %s", (voice_id, user_id))
+            voice_result = cursor.fetchone()
+            
+            if not voice_result:
+                return {"success": False, "message": "音色不存在或无权限"}
+            
+            # 更新字段
+            update_fields = []
+            update_values = []
+            
+            if 'name' in data:
+                update_fields.append('name = %s')
+                update_values.append(data['name'])
+            
+            if 'referenceText' in data:
+                update_fields.append('reference_text = %s')
+                update_values.append(data['referenceText'])
+            
+            # 处理音频文件更新
+            if 'audio_file_path' in data:
+                import uuid
+                import shutil
+                
+                audio_file_path = data['audio_file_path']
+                if os.path.exists(audio_file_path):
+                    # 生成新的文件名
+                    file_extension = os.path.splitext(audio_file_path)[1] or '.webm'
+                    unique_filename = f"{uuid.uuid4().hex}{file_extension}"
+                    
+                    # 设置目标路径
+                    voice_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'voices')
+                    os.makedirs(voice_dir, exist_ok=True)
+                    target_path = os.path.join(voice_dir, unique_filename)
+                    
+                    # 删除旧文件
+                    if voice_result.get('reference_audio') and os.path.exists(voice_result['reference_audio']):
+                        try:
+                            os.remove(voice_result['reference_audio'])
+                        except:
+                            pass
+                    
+                    # 移动新文件
+                    shutil.move(audio_file_path, target_path)
+                    
+                    update_fields.append('reference_audio = %s')
+                    update_values.append(target_path)
+            
+            if update_fields:
+                from datetime import datetime
+                update_fields.append('update_date = %s')
+                update_values.append(datetime.now())
+                update_values.append(voice_id)
+                
+                sql = f"UPDATE ai_tts_voice SET {', '.join(update_fields)} WHERE id = %s"
+                cursor.execute(sql, update_values)
+                
+                conn.commit()
+            
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "message": "音色更新成功"}
+            
+        except Exception as e:
+            logger.error(f"更新音色失败: {e}")
+            return {"success": False, "message": f"更新失败: {str(e)}"}
+
+    def test_voice_clone_with_agent(self, user_id: int, test_text: str) -> Dict[str, Any]:
+        """使用智能体配置测试声音合成"""
+        try:
+            # 获取用户智能体的TTS配置
+            agent_info = self.get_user_agent_info_sync(user_id)
+            
+            if not agent_info.get('success'):
+                return {"success": False, "message": "获取智能体信息失败"}
+            
+            agent_data = agent_info.get('data', {})
+            tts_model_id = agent_data.get('tts_model_id', 'TTS_CosyVoiceClone302AI')
+            tts_voice_id = agent_data.get('tts_voice_id', 'TTS_CosyVoiceClone302AI0001')
+            
+            # 这里应该调用实际的TTS服务，暂时返回模拟结果
+            return {
+                "success": True, 
+                "message": "声音测试完成",
+                "audio_url": f"/api/tts/test_audio_{user_id}_{int(datetime.now().timestamp())}.mp3",
+                "tts_model": tts_model_id,
+                "tts_voice": tts_voice_id,
+                "test_text": test_text
+            }
+        except Exception as e:
+            logger.error(f"测试声音合成错误: {e}")
+            return {"success": False, "message": f"测试失败: {str(e)}"}
+
+    def get_monitor_data_sync(self, user_id: int) -> Dict[str, Any]:
+        """获取监控数据（同步版本，整合前端所需的所有数据）"""
+        try:
+            # 获取健康数据
+            health_data = self.get_latest_health_data(user_id)
+            
+            # 获取提醒数据
+            reminders_data = self.get_reminders(user_id, days=7)
+            
+            # 获取设备数据
+            devices_data = self.get_user_devices(user_id)
+            
+            # 整合数据
+            result = {
+                "success": True,
+                "data": {
+                    "health_data": health_data.get('data', {}),
+                    "reminders": reminders_data.get('data', []),
+                    "devices": devices_data.get('data', []),
+                    "last_update": datetime.now().isoformat()
+                }
+            }
+            
+            return result
+        except Exception as e:
+            logger.error(f"获取监控数据错误: {e}")
+            return {"success": False, "message": f"获取失败: {str(e)}"}
+
+    def create_health_reminder_from_frontend(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """从前端创建健康提醒（同步版本）"""
+        try:
+            # 转换前端数据格式到后端格式
+            reminder_data = {
+                'user_id': data.get('user_id', 1),
+                'reminder_type': 'health',
+                'title': data.get('title', '健康提醒'),
+                'content': data.get('content', ''),
+                'scheduled_time': data.get('scheduled_time'),
+                'repeat_pattern': data.get('repeat_pattern', 'once'),
+                'repeat_config': data.get('repeat_config', {}),
+                'tts_enabled': data.get('tts_enabled', 1),
+                'priority': data.get('priority', 'medium')
+            }
+            
+            return self.create_reminder(reminder_data)
+        except Exception as e:
+            logger.error(f"创建健康提醒错误: {e}")
+            return {"success": False, "message": f"创建失败: {str(e)}"}
+
     # =========================== 智能提醒管理（集成TTS声音克隆）===========================
     
     async def create_reminder_with_voice(self, reminder_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -962,6 +1715,236 @@ class ElderCareAPI:
         except Exception as e:
             logger.error(f"获取提醒列表错误: {e}")
             return {"success": False, "message": f"获取失败: {str(e)}"}
+
+    def get_reminders(self, user_id: int, days: int = 7) -> Dict[str, Any]:
+        """获取用户提醒（简化版，不包含语音信息）"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 获取指定天数内的提醒
+            sql = """
+            SELECT 
+                id, user_id, ai_agent_id, reminder_type, title, content,
+                scheduled_time, repeat_pattern, priority, is_completed, status,
+                create_date
+            FROM ec_reminders 
+            WHERE user_id = %s 
+            AND scheduled_time >= DATE_SUB(NOW(), INTERVAL %s DAY)
+            AND status = 'active'
+            ORDER BY scheduled_time ASC
+            LIMIT 50
+            """
+            
+            cursor.execute(sql, (user_id, days))
+            reminders = cursor.fetchall()
+            
+            # 格式化时间字段
+            for reminder in reminders:
+                if reminder['scheduled_time']:
+                    reminder['scheduled_time'] = reminder['scheduled_time'].strftime('%Y-%m-%d %H:%M:%S')
+                if reminder['create_date']:
+                    reminder['create_date'] = reminder['create_date'].strftime('%Y-%m-%d %H:%M:%S')
+            
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "data": reminders}
+            
+        except Exception as e:
+            logger.error(f"获取用户提醒错误: {e}")
+            return {"success": False, "message": f"获取失败: {str(e)}"}
+
+    async def get_user_emergency_calls(self, user_id: int, days: int = 7) -> List[Dict[str, Any]]:
+        """获取用户紧急呼救记录"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            sql = """
+            SELECT 
+                id, user_id, ai_device_id, emergency_type as call_type, timestamp, 
+                location_address as location, resolution_notes as notes, status,
+                severity_level, trigger_source, create_date as created_at
+            FROM ec_emergency_calls 
+            WHERE user_id = %s 
+            AND timestamp >= DATE_SUB(NOW(), INTERVAL %s DAY)
+            ORDER BY timestamp DESC
+            LIMIT 50
+            """
+            
+            cursor.execute(sql, (user_id, days))
+            emergency_calls = cursor.fetchall()
+            
+            # 格式化时间字段
+            for call in emergency_calls:
+                if call['timestamp']:
+                    call['timestamp'] = call['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+                if call['created_at']:
+                    call['created_at'] = call['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            
+            cursor.close()
+            conn.close()
+            
+            return emergency_calls
+            
+        except Exception as e:
+            logger.error(f"获取紧急呼救记录错误: {e}")
+            return []
+
+    def get_user_emergency_calls_sync(self, user_id: int, days: int = 7) -> List[Dict[str, Any]]:
+        """获取用户紧急呼救记录（同步版本）"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            sql = """
+            SELECT 
+                id, user_id, ai_device_id, emergency_type as call_type, timestamp, 
+                location_address as location, resolution_notes as notes, status,
+                severity_level, trigger_source, create_date as created_at
+            FROM ec_emergency_calls 
+            WHERE user_id = %s 
+            AND timestamp >= DATE_SUB(NOW(), INTERVAL %s DAY)
+            ORDER BY timestamp DESC
+            LIMIT 50
+            """
+            
+            cursor.execute(sql, (user_id, days))
+            emergency_calls = cursor.fetchall()
+            
+            # 格式化时间字段
+            for call in emergency_calls:
+                if call['timestamp']:
+                    call['timestamp'] = call['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+                if call['created_at']:
+                    call['created_at'] = call['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            
+            cursor.close()
+            conn.close()
+            
+            return emergency_calls
+            
+        except Exception as e:
+            logger.error(f"获取紧急呼救记录错误: {e}")
+            return []
+
+    def create_reminder(self, reminder_data: Dict[str, Any]) -> Dict[str, Any]:
+        """创建提醒（同步版本，兼容路由调用）"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # 处理时间格式
+            scheduled_time = reminder_data.get('scheduled_time')
+            if isinstance(scheduled_time, str):
+                # 处理前端发来的datetime-local格式
+                if 'T' in scheduled_time:
+                    scheduled_time = datetime.fromisoformat(scheduled_time.replace('Z', ''))
+                else:
+                    scheduled_time = datetime.strptime(scheduled_time, '%Y-%m-%d %H:%M:%S')
+            elif scheduled_time is None:
+                return {"success": False, "message": "必须提供提醒时间"}
+
+            sql = """
+            INSERT INTO ec_reminders (
+                user_id, ai_agent_id, reminder_type, title, content, 
+                scheduled_time, repeat_pattern, priority, status, 
+                create_date, update_date
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            """
+            
+            cursor.execute(sql, (
+                reminder_data['user_id'],
+                reminder_data.get('ai_agent_id'),
+                reminder_data.get('reminder_type', 'other'),
+                reminder_data['title'],
+                reminder_data.get('content', ''),
+                scheduled_time,
+                reminder_data.get('repeat_pattern', 'none'),
+                reminder_data.get('priority', 'medium'),
+                'active'
+            ))
+            
+            reminder_id = cursor.lastrowid
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"创建提醒成功: ID={reminder_id}, 用户={reminder_data['user_id']}")
+            return {
+                "success": True, 
+                "message": "提醒创建成功", 
+                "reminder_id": reminder_id
+            }
+            
+        except Exception as e:
+            logger.error(f"创建提醒错误: {e}")
+            return {"success": False, "message": f"创建失败: {str(e)}"}
+    
+    def update_reminder(self, reminder_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        """更新提醒"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # 构建更新字段
+            update_fields = []
+            values = []
+            
+            allowed_fields = ['title', 'content', 'scheduled_time', 'repeat_pattern', 'priority', 'is_completed', 'status']
+            
+            for field in allowed_fields:
+                if field in update_data:
+                    update_fields.append(f"{field} = %s")
+                    values.append(update_data[field])
+            
+            if not update_fields:
+                return {"success": False, "message": "没有可更新的字段"}
+            
+            values.append(reminder_id)
+            sql = f"UPDATE ec_reminders SET {', '.join(update_fields)}, update_date = NOW() WHERE id = %s"
+            
+            cursor.execute(sql, values)
+            
+            if cursor.rowcount > 0:
+                cursor.close()
+                conn.close()
+                return {"success": True, "message": "提醒更新成功"}
+            else:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "提醒不存在"}
+                
+        except Exception as e:
+            logger.error(f"更新提醒错误: {e}")
+            return {"success": False, "message": f"更新失败: {str(e)}"}
+    
+    def delete_reminder(self, reminder_id: int, user_id: int = None) -> Dict[str, Any]:
+        """删除提醒"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # 如果指定了用户ID，增加用户验证
+            if user_id:
+                sql = "DELETE FROM ec_reminders WHERE id = %s AND user_id = %s"
+                cursor.execute(sql, (reminder_id, user_id))
+            else:
+                sql = "DELETE FROM ec_reminders WHERE id = %s"
+                cursor.execute(sql, (reminder_id,))
+            
+            if cursor.rowcount > 0:
+                cursor.close()
+                conn.close()
+                return {"success": True, "message": "提醒删除成功"}
+            else:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "提醒不存在或无权删除"}
+                
+        except Exception as e:
+            logger.error(f"删除提醒错误: {e}")
+            return {"success": False, "message": f"删除失败: {str(e)}"}
 
     # =========================== 健康设备管理 ===========================
     
@@ -1184,12 +2167,82 @@ class ElderCareAPI:
     
     async def get_user_agents(self, user_id: int) -> Dict[str, Any]:
         """获取用户智能体列表（路由接口）"""
-        return await self.get_user_agent_info(user_id)
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 获取用户信息，包括拥有的智能体列表和默认智能体ID
+            cursor.execute("""
+                SELECT owned_ai_agents, default_ai_agent_id 
+                FROM ec_users 
+                WHERE id = %s
+            """, (user_id,))
+            user_info = cursor.fetchone()
+            
+            if not user_info:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "用户不存在"}
+            
+            # 解析用户拥有的智能体列表
+            try:
+                owned_agents = json.loads(user_info.get('owned_ai_agents', '[]'))
+            except:
+                owned_agents = []
+            
+            if not owned_agents:
+                cursor.close()
+                conn.close()
+                return {"success": True, "data": []}
+            
+            # 获取智能体详细信息
+            placeholders = ','.join(['%s'] * len(owned_agents))
+            query = f"""
+                SELECT id, agent_name, agent_code, system_prompt, 
+                       lang_code, language, sort, created_at, updated_at
+                FROM ai_agent 
+                WHERE id IN ({placeholders})
+                ORDER BY sort ASC, created_at DESC
+            """
+            
+            cursor.execute(query, owned_agents)
+            agents = cursor.fetchall()
+            
+            # 添加是否为默认智能体的标识
+            default_agent_id = user_info.get('default_ai_agent_id')
+            for agent in agents:
+                agent['is_default'] = agent['id'] == default_agent_id
+                # 确保日期字段可以JSON序列化
+                if agent.get('created_at'):
+                    agent['created_at'] = agent['created_at'].isoformat() if hasattr(agent['created_at'], 'isoformat') else str(agent['created_at'])
+                if agent.get('updated_at'):
+                    agent['updated_at'] = agent['updated_at'].isoformat() if hasattr(agent['updated_at'], 'isoformat') else str(agent['updated_at'])
+            
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "data": agents}
+            
+        except Exception as e:
+            logger.error(f"获取用户智能体列表失败: {e}")
+            return {"success": False, "message": str(e)}
     
     async def create_agent(self, agent_data: Dict[str, Any]) -> Dict[str, Any]:
         """创建智能体（路由接口）"""
-        user_id = agent_data.get('user_id', 1)
-        return await self.create_eldercare_ai_agent(user_id, agent_data)
+        # 处理前端数据格式
+        user_id = agent_data.get('userId', agent_data.get('user_id', 1))
+        
+        # 转换前端字段名到数据库字段名 - 只包含数据库实际存在的字段
+        normalized_data = {
+            'agent_name': agent_data.get('agentName', agent_data.get('agent_name', '')),
+            'agent_code': agent_data.get('agentCode', agent_data.get('agent_code', '')),
+            'system_prompt': agent_data.get('systemPrompt', agent_data.get('system_prompt', '')),
+            'lang_code': agent_data.get('langCode', agent_data.get('lang_code', 'zh-CN')),
+            'language': agent_data.get('language', 'zh-CN'),
+            'sort': agent_data.get('sort', 0)
+        }
+        
+        return await self.create_eldercare_ai_agent(user_id, normalized_data)
     
     async def get_agent_details(self, agent_id: str) -> Dict[str, Any]:
         """获取智能体详情（路由接口）"""
@@ -1253,43 +2306,107 @@ class ElderCareAPI:
             update_fields = []
             values = []
             
-            if 'agent_name' in agent_data:
-                update_fields.append("agent_name = %s")
-                values.append(agent_data['agent_name'])
+            # 字段映射 (前端字段 -> 数据库字段) - 只包含数据库实际存在的字段
+            field_mapping = {
+                'agentName': 'agent_name',
+                'agent_name': 'agent_name',
+                'agentCode': 'agent_code',
+                'agent_code': 'agent_code',
+                'systemPrompt': 'system_prompt',
+                'system_prompt': 'system_prompt',
+                'template_id': 'template_id',
+                'langCode': 'lang_code',
+                'lang_code': 'lang_code',
+                'language': 'language',
+                'sort': 'sort'
+            }
             
-            if 'system_prompt' in agent_data:
-                update_fields.append("system_prompt = %s")
-                values.append(agent_data['system_prompt'])
+            for frontend_field, db_field in field_mapping.items():
+                if frontend_field in agent_data:
+                    update_fields.append(f"{db_field} = %s")
+                    values.append(agent_data[frontend_field])
             
-            if 'template_id' in agent_data:
-                update_fields.append("template_id = %s")
-                values.append(agent_data['template_id'])
+            if not update_fields:
+                return {"success": False, "message": "没有可更新的字段"}
             
             values.append(agent_id)
             
-            cursor.execute(f"""
+            query = f"""
                 UPDATE ai_agent 
                 SET {', '.join(update_fields)}, updated_at = NOW()
                 WHERE id = %s
-            """, values)
+            """
+            
+            # print(f"执行SQL: {query}")
+            # print(f"参数: {values}")
+            
+            cursor.execute(query, values)
             
             conn.commit()
-            cursor.close()
-            conn.close()
             
-            return {"success": True, "message": "智能体更新成功"}
+            if cursor.rowcount > 0:
+                # print(f"更新成功，影响行数: {cursor.rowcount}")
+                cursor.close()
+                conn.close()
+                return {"success": True, "message": "智能体更新成功"}
+            else:
+                # print(f"未找到智能体，agent_id: {agent_id}")
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "智能体不存在"}
             
         except Exception as e:
             logger.error(f"更新智能体失败: {e}")
+            # print(f"更新智能体错误: {e}")
             return {"success": False, "message": str(e)}
 
     async def delete_agent(self, agent_id: str) -> Dict[str, Any]:
         """删除智能体"""
         try:
             conn = self.get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
             
+            # 先查找拥有该智能体的用户
+            cursor.execute("""
+                SELECT u.id, u.owned_ai_agents, u.default_ai_agent_id 
+                FROM ec_users u 
+                WHERE JSON_CONTAINS(u.owned_ai_agents, JSON_QUOTE(%s))
+            """, (agent_id,))
+            user_info = cursor.fetchone()
+            
+            if not user_info:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "智能体不存在或不属于任何用户"}
+            
+            # 删除智能体记录
             cursor.execute("DELETE FROM ai_agent WHERE id = %s", (agent_id,))
+            
+            if cursor.rowcount == 0:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "智能体不存在"}
+            
+            # 更新用户的owned_ai_agents列表
+            try:
+                owned_agents = json.loads(user_info.get('owned_ai_agents', '[]'))
+            except:
+                owned_agents = []
+            
+            if agent_id in owned_agents:
+                owned_agents.remove(agent_id)
+                cursor.execute(
+                    "UPDATE ec_users SET owned_ai_agents = %s, update_date = NOW() WHERE id = %s", 
+                    (json.dumps(owned_agents), user_info['id'])
+                )
+            
+            # 如果删除的是默认智能体，需要重新设置默认智能体
+            if user_info.get('default_ai_agent_id') == agent_id:
+                new_default_id = owned_agents[0] if owned_agents else None
+                cursor.execute(
+                    "UPDATE ec_users SET default_ai_agent_id = %s WHERE id = %s", 
+                    (new_default_id, user_info['id'])
+                )
             
             conn.commit()
             cursor.close()
@@ -1299,6 +2416,58 @@ class ElderCareAPI:
             
         except Exception as e:
             logger.error(f"删除智能体失败: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def set_default_agent(self, user_id: int, agent_id: str) -> Dict[str, Any]:
+        """设置默认智能体"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 首先检查用户是否存在以及其拥有的智能体列表
+            cursor.execute("SELECT owned_ai_agents FROM ec_users WHERE id = %s", (user_id,))
+            user_info = cursor.fetchone()
+            
+            if not user_info:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "用户不存在"}
+            
+            # 解析用户拥有的智能体列表
+            try:
+                owned_agents = json.loads(user_info.get('owned_ai_agents', '[]'))
+            except:
+                owned_agents = []
+            
+            # 检查agent_id是否在用户拥有的智能体列表中
+            if agent_id not in owned_agents:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "该智能体不属于当前用户"}
+            
+            # 检查智能体是否存在
+            cursor.execute("SELECT id FROM ai_agent WHERE id = %s", (agent_id,))
+            agent_exists = cursor.fetchone()
+            
+            if not agent_exists:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "智能体不存在"}
+            
+            # 更新用户的默认智能体
+            cursor.execute(
+                "UPDATE ec_users SET default_ai_agent_id = %s, update_date = NOW() WHERE id = %s", 
+                (agent_id, user_id)
+            )
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "message": "默认智能体设置成功"}
+            
+        except Exception as e:
+            logger.error(f"设置默认智能体失败: {e}")
             return {"success": False, "message": str(e)}
 
     async def get_agent_templates_old(self) -> Dict[str, Any]:
@@ -1421,23 +2590,48 @@ class ElderCareAPI:
     async def get_monitor_data(self, device_id: str, days: int = 7) -> Dict[str, Any]:
         """获取监控数据（整合接口）"""
         try:
+            # 如果device_id看起来像是用户ID（纯数字），直接使用
+            if device_id.isdigit():
+                user_id = int(device_id)
+            else:
+                # 否则根据device_id查找对应的用户ID
+                try:
+                    conn = self.get_connection()
+                    cursor = conn.cursor()
+                    
+                    # 先在ai_device表中查找
+                    cursor.execute("SELECT user_id FROM ai_device WHERE mac_address = %s OR alias = %s LIMIT 1", (device_id, device_id))
+                    result = cursor.fetchone()
+                    
+                    if not result:
+                        # 如果ai_device表中没有，在ec_health_devices表中查找
+                        cursor.execute("SELECT user_id FROM ec_health_devices WHERE device_name = %s LIMIT 1", (device_id,))
+                        result = cursor.fetchone()
+                    
+                    cursor.close()
+                    conn.close()
+                    
+                    if result:
+                        user_id = result[0]
+                    else:
+                        # 如果找不到对应的设备，使用默认用户ID
+                        user_id = 1
+                        logger.warning(f"找不到设备ID {device_id} 对应的用户，使用默认用户ID 1")
+                        
+                except Exception as e:
+                    logger.error(f"查找设备用户ID失败: {e}")
+                    user_id = 1  # 默认用户ID
+            
             # 获取健康数据
-            health_result = await self.get_health_data(1, days)  # 使用默认用户ID
+            health_result = self.get_health_data(user_id)
             health_data = health_result.get("data", []) if health_result.get("success") else []
             
             # 获取提醒数据
-            reminders_result = await self.get_user_reminders_with_voice(1)
+            reminders_result = await self.get_user_reminders_with_voice(user_id)
             reminders = reminders_result.get("data", []) if reminders_result.get("success") else []
             
-            # 生成模拟紧急呼救数据
-            emergency_calls = [
-                {
-                    "id": 1,
-                    "timestamp": "2025-09-17T15:30:00Z",
-                    "notes": "心率异常检测",
-                    "status": "resolved"
-                }
-            ]
+            # 获取真实紧急呼救数据
+            emergency_calls = await self.get_user_emergency_calls(user_id, days=7)
             
             return {
                 "success": True,
@@ -1450,9 +2644,7 @@ class ElderCareAPI:
             logger.error(f"获取监控数据失败: {e}")
             return {"success": False, "message": str(e)}
     
-    async def create_voice_clone_from_frontend(self, voice_data: Dict[str, Any]) -> Dict[str, Any]:
-        """从前端创建声音克隆"""
-        return await self.create_voice_clone(voice_data)
+# 删除重复的异步版本，使用同步版本
     
     async def create_health_reminder_from_frontend(self, reminder_data: Dict[str, Any]) -> Dict[str, Any]:
         """从前端创建健康提醒"""
@@ -1461,6 +2653,203 @@ class ElderCareAPI:
     async def register_device(self, device_data: Dict[str, Any]) -> Dict[str, Any]:
         """注册设备"""
         return await self.register_health_device(device_data)
+    
+    async def update_device(self, device_id: int, device_data: Dict[str, Any], device_type: str = "ai") -> Dict[str, Any]:
+        """更新设备信息"""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.cursor()
+            
+            if device_type == "ai":
+                # 构建AI设备更新SQL
+                update_fields = []
+                values = []
+                
+                if 'alias' in device_data:
+                    update_fields.append("alias = %s")
+                    values.append(device_data['alias'])
+                
+                if 'mac_address' in device_data:
+                    update_fields.append("mac_address = %s")
+                    values.append(device_data['mac_address'])
+                
+                if 'auto_update' in device_data:
+                    update_fields.append("auto_update = %s")
+                    values.append(device_data['auto_update'])
+                
+                if update_fields:
+                    update_fields.append("update_date = NOW()")
+                    values.append(device_id)
+                    
+                    sql = f"UPDATE ai_device SET {', '.join(update_fields)} WHERE id = %s"
+                    await cursor.execute(sql, values)
+            else:
+                # 构建健康设备更新SQL
+                update_fields = []
+                values = []
+                
+                if 'device_name' in device_data:
+                    update_fields.append("device_name = %s")
+                    values.append(device_data['device_name'])
+                
+                if 'device_type' in device_data:
+                    update_fields.append("device_type = %s")
+                    values.append(device_data['device_type'])
+                
+                if 'device_config' in device_data:
+                    update_fields.append("device_config = %s")
+                    values.append(device_data['device_config'])
+                
+                if 'ai_agent_id' in device_data:
+                    update_fields.append("ai_agent_id = %s")
+                    values.append(device_data['ai_agent_id'])
+                
+                if 'plugin_id' in device_data:
+                    update_fields.append("plugin_id = %s")
+                    values.append(device_data['plugin_id'])
+                
+                if update_fields:
+                    update_fields.append("update_date = NOW()")
+                    values.append(device_id)
+                    
+                    sql = f"UPDATE ec_health_devices SET {', '.join(update_fields)} WHERE id = %s"
+                    await cursor.execute(sql, values)
+            
+            await conn.commit()
+            affected_rows = cursor.rowcount
+            
+            if affected_rows > 0:
+                return {
+                    "success": True,
+                    "message": "设备更新成功"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "设备不存在或未更新"
+                }
+            
+        except Exception as e:
+            logger.error(f"更新设备失败: {str(e)}")
+            return {
+                "success": False,
+                "message": f"更新设备失败: {str(e)}"
+            }
+        finally:
+            if 'cursor' in locals():
+                await cursor.close()
+            if 'conn' in locals():
+                await self.return_connection(conn)
+    
+    async def get_device_details(self, device_id: int, device_type: str = "ai") -> Dict[str, Any]:
+        """获取设备详细信息"""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.cursor(DictCursor)
+            
+            if device_type == "ai":
+                sql = """
+                SELECT id, user_id, alias, mac_address, last_connected_at, 
+                       board, app_version, auto_update, create_date, update_date, creator
+                FROM ai_device 
+                WHERE id = %s
+                """
+            else:
+                sql = """
+                SELECT id, user_id, device_name, device_type, device_config, 
+                       ai_agent_id, plugin_id, create_date, update_date, creator
+                FROM ec_health_devices 
+                WHERE id = %s
+                """
+            
+            await cursor.execute(sql, (device_id,))
+            device = await cursor.fetchone()
+            
+            if device:
+                # 计算设备状态
+                if device_type == "ai" and device.get('last_connected_at'):
+                    now = datetime.now()
+                    last_connected = device['last_connected_at']
+                    if isinstance(last_connected, str):
+                        last_connected = datetime.fromisoformat(last_connected)
+                    
+                    time_diff = (now - last_connected).total_seconds()
+                    device['status'] = 'online' if time_diff <= 300 else 'offline'  # 5分钟内算在线
+                else:
+                    device['status'] = 'offline'
+                
+                return {
+                    "success": True,
+                    "device": device
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "设备不存在"
+                }
+            
+        except Exception as e:
+            logger.error(f"获取设备详情失败: {str(e)}")
+            return {
+                "success": False,
+                "message": f"获取设备详情失败: {str(e)}"
+            }
+        finally:
+            if 'cursor' in locals():
+                await cursor.close()
+            if 'conn' in locals():
+                await self.return_connection(conn)
+    
+    async def update_device_config(self, device_id: int, config_data: Dict[str, Any], device_type: str = "ai") -> Dict[str, Any]:
+        """更新设备配置"""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.cursor()
+            
+            if device_type == "ai":
+                # AI设备配置更新
+                sql = """
+                UPDATE ai_device 
+                SET device_config = %s, update_date = NOW()
+                WHERE id = %s
+                """
+                config_json = json.dumps(config_data, ensure_ascii=False)
+                await cursor.execute(sql, (config_json, device_id))
+            else:
+                # 健康设备配置更新
+                sql = """
+                UPDATE ec_health_devices 
+                SET device_config = %s, update_date = NOW()
+                WHERE id = %s
+                """
+                config_json = json.dumps(config_data, ensure_ascii=False)
+                await cursor.execute(sql, (config_json, device_id))
+            
+            await conn.commit()
+            affected_rows = cursor.rowcount
+            
+            if affected_rows > 0:
+                return {
+                    "success": True,
+                    "message": "设备配置更新成功"
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "设备不存在或未更新"
+                }
+            
+        except Exception as e:
+            logger.error(f"更新设备配置失败: {str(e)}")
+            return {
+                "success": False,
+                "message": f"更新设备配置失败: {str(e)}"
+            }
+        finally:
+            if 'cursor' in locals():
+                await cursor.close()
+            if 'conn' in locals():
+                await self.return_connection(conn)
     
     # ===== 路由集成方法 - 用于注册到xiaozhi-server路由系统 =====
     
@@ -1478,8 +2867,8 @@ class ElderCareAPI:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
-            # 从ec_users表中获取用户拥有的智能体ID列表
-            cursor.execute("SELECT owned_ai_agents FROM ec_users WHERE id = %s", (user_id,))
+            # 从ec_users表中获取用户拥有的智能体ID列表和默认智能体ID
+            cursor.execute("SELECT owned_ai_agents, default_ai_agent_id FROM ec_users WHERE id = %s", (user_id,))
             user_data = cursor.fetchone()
             
             if not user_data:
@@ -1494,6 +2883,8 @@ class ElderCareAPI:
             if not agent_ids:
                 return {"success": True, "data": []}
             
+            default_agent_id = user_data.get('default_ai_agent_id')
+            
             # 获取智能体详情
             placeholders = ','.join(['%s'] * len(agent_ids))
             sql = f"""
@@ -1507,6 +2898,11 @@ class ElderCareAPI:
             
             cursor.execute(sql, agent_ids)
             agents = cursor.fetchall()
+            
+            # 添加是否为默认智能体的标识
+            for agent in agents:
+                agent['is_default'] = agent['id'] == default_agent_id
+                # print(f"Agent {agent['id']}, default_agent_id: {default_agent_id}, is_default: {agent['is_default']}")
             
             cursor.close()
             conn.close()
@@ -1586,9 +2982,43 @@ class ElderCareAPI:
             cursor.close()
             conn.close()
             
+            # 转换datetime对象为字符串
+            health_data = self._convert_datetime_to_string(health_data)
+            
             return {"success": True, "data": health_data}
         except Exception as e:
             return {"success": False, "message": f"获取健康数据失败: {str(e)}"}
+    
+    def get_latest_health_data(self, user_id: int) -> Dict[str, Any]:
+        """获取用户的最新健康数据"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 获取最新的健康数据记录
+            sql = """
+            SELECT hd.*, hdev.device_name, hdev.device_type, hdev.device_brand, hdev.device_model
+            FROM ec_health_data hd
+            LEFT JOIN ec_health_devices hdev ON hd.health_device_id = hdev.id
+            WHERE hd.user_id = %s
+            ORDER BY hd.timestamp DESC
+            LIMIT 1
+            """
+            
+            cursor.execute(sql, (user_id,))
+            latest_data = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if latest_data:
+                # 转换datetime对象为字符串
+                latest_data = self._convert_datetime_to_string([latest_data])[0]
+                return {"success": True, "data": latest_data}
+            else:
+                return {"success": True, "data": None}
+        except Exception as e:
+            return {"success": False, "message": f"获取最新健康数据失败: {str(e)}"}
     
     def get_user_ai_devices(self, user_id: int) -> Dict[str, Any]:
         """获取用户的AI智能陪伴设备"""
@@ -1596,40 +3026,95 @@ class ElderCareAPI:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
-            sql = """
-            SELECT ad.*, aa.agent_name
+            # 首先获取用户的所有智能体ID
+            cursor.execute("SELECT owned_ai_agents, default_ai_agent_id FROM ec_users WHERE id = %s", (user_id,))
+            user_result = cursor.fetchone()
+            
+            if not user_result:
+                return {"success": False, "message": "用户不存在"}
+            
+            # 获取用户的智能体ID列表，确保转换为字符串类型
+            agent_ids = []
+            if user_result['owned_ai_agents']:
+                try:
+                    import json
+                    raw_ids = json.loads(user_result['owned_ai_agents'])
+                    agent_ids = [str(agent_id) for agent_id in raw_ids]
+                except:
+                    agent_ids = []
+            
+            # 如果有default_ai_agent_id，也加入列表，确保是字符串类型
+            if user_result['default_ai_agent_id']:
+                default_agent_str = str(user_result['default_ai_agent_id'])
+                if default_agent_str not in agent_ids:
+                    agent_ids.append(default_agent_str)
+            
+            if not agent_ids:
+                return {"success": True, "data": []}
+            
+            # 为SQL查询准备参数
+            placeholders = ','.join(['%s'] * len(agent_ids))
+            
+            sql = f"""
+            SELECT 
+                ad.id, ad.user_id, ad.mac_address, ad.alias as device_name,
+                ad.last_connected_at as last_online, ad.board, ad.app_version,
+                ad.create_date, ad.update_date, aa.agent_name, ad.agent_id,
+                CASE 
+                    WHEN ad.last_connected_at IS NULL THEN 0
+                    WHEN ad.last_connected_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE) THEN 1
+                    ELSE 0
+                END as status,
+                'ai_companion' as device_type,
+                COALESCE(ad.alias, '未命名AI设备') as location
             FROM ai_device ad
             LEFT JOIN ai_agent aa ON ad.agent_id = aa.id
-            WHERE ad.user_id = %s
+            WHERE ad.agent_id IN ({placeholders})
             ORDER BY ad.create_date DESC
             """
             
-            cursor.execute(sql, [user_id])
+            cursor.execute(sql, agent_ids)
             devices = cursor.fetchall()
             
             cursor.close()
             conn.close()
+            
+            # 处理设备信息
+            for device in devices:
+                if not device.get('device_name'):
+                    device['device_name'] = f"AI设备 {device['id'][:8]}"
             
             # 转换datetime对象
             devices = self._convert_datetime_to_string(devices)
             
             return {"success": True, "data": devices}
         except Exception as e:
+            logger.error(f"获取AI设备失败: {e}")
             return {"success": False, "message": f"获取AI设备失败: {str(e)}"}
     
     def get_user_health_devices(self, user_id: int) -> Dict[str, Any]:
-        """获取用户的健康监测设备"""
+        """获取用户的健康监测设备 - 根据用户ID和AI设备ID关联查找"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
+            # 查询方式1：获取该用户的健康设备，以及关联的AI设备信息
             sql = """
-            SELECT * FROM ec_health_devices
-            WHERE user_id = %s
-            ORDER BY create_date DESC
+            SELECT 
+                hd.id, hd.user_id, hd.ai_agent_id, hd.ai_device_id, 
+                hd.plugin_id, hd.device_name, hd.device_type, hd.device_brand, 
+                hd.device_model, hd.mac_address, hd.health_features, 
+                hd.sensor_config, hd.data_sync_config, hd.connection_status,
+                hd.battery_level, hd.firmware_version, hd.last_sync_time,
+                hd.is_active, hd.create_date, hd.update_date,
+                ad.alias as ai_device_name, ad.agent_id as ai_agent_id_ref
+            FROM ec_health_devices hd
+            LEFT JOIN ai_device ad ON hd.ai_device_id = ad.id
+            WHERE hd.user_id = %s AND hd.is_active = 1
+            ORDER BY hd.create_date DESC
             """
             
-            cursor.execute(sql, [user_id])
+            cursor.execute(sql, (user_id,))
             devices = cursor.fetchall()
             
             cursor.close()
@@ -1640,7 +3125,333 @@ class ElderCareAPI:
             
             return {"success": True, "data": devices}
         except Exception as e:
+            logger.error(f"获取健康设备失败: {e}")
             return {"success": False, "message": f"获取健康设备失败: {str(e)}"}
+
+    def get_user_devices(self, user_id: int) -> Dict[str, Any]:
+        """获取用户的所有设备（AI设备 + 健康设备）"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 首先获取用户的智能体ID列表
+            cursor.execute("SELECT owned_ai_agents, default_ai_agent_id FROM ec_users WHERE id = %s", (user_id,))
+            user_result = cursor.fetchone()
+            
+            ai_devices = []
+            if user_result:
+                agent_ids = []
+                if user_result['owned_ai_agents']:
+                    try:
+                        import json
+                        agent_ids = json.loads(user_result['owned_ai_agents'])
+                    except:
+                        agent_ids = []
+                
+                # 如果有default_ai_agent_id，也加入列表
+                if user_result['default_ai_agent_id'] and user_result['default_ai_agent_id'] not in agent_ids:
+                    agent_ids.append(user_result['default_ai_agent_id'])
+                
+                if agent_ids:
+                    # 为SQL查询准备参数
+                    placeholders = ','.join(['%s'] * len(agent_ids))
+                    
+                    # 获取AI智能陪伴设备 - 通过agent_id查找
+                    ai_devices_sql = f"""
+                    SELECT 
+                        id, id as device_code, alias as device_name, mac_address,
+                        'ai_companion' as device_type, 'companion' as category,
+                        CASE 
+                            WHEN last_connected_at IS NULL THEN 0
+                            WHEN last_connected_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE) THEN 1
+                            ELSE 0
+                        END as status,
+                        last_connected_at as last_online,
+                        create_date, update_date, board, app_version,
+                        COALESCE(alias, '未命名设备') as location, agent_id
+                    FROM ai_device 
+                    WHERE agent_id IN ({placeholders})
+                    ORDER BY create_date DESC
+                    """
+                    
+                    cursor.execute(ai_devices_sql, agent_ids)
+                    ai_devices = cursor.fetchall()
+            
+            # 获取健康监测设备
+            health_devices_sql = """
+            SELECT 
+                id, device_name, device_type, device_brand, device_model,
+                CASE 
+                    WHEN connection_status = 'connected' THEN 1
+                    ELSE 0
+                END as status,
+                last_sync_time as last_online,
+                create_date, update_date, 'health_monitor' as category,
+                mac_address, battery_level, firmware_version
+            FROM ec_health_devices
+            WHERE user_id = %s AND is_active = 1
+            ORDER BY create_date DESC
+            """
+            
+            cursor.execute(health_devices_sql, [user_id])
+            health_devices = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # 合并设备列表并标准化格式
+            all_devices = []
+            
+            # 处理AI设备
+            for device in ai_devices:
+                # 确保device_name字段存在
+                if not device.get('device_name'):
+                    device['device_name'] = device.get('alias') or f"AI设备 {device['id'][:8]}"
+                
+                # 添加位置信息
+                if not device.get('location'):
+                    device['location'] = '未指定位置'
+                    
+                all_devices.append(device)
+            
+            # 处理健康设备
+            for device in health_devices:
+                device['category'] = 'health_monitor'
+                # 状态标准化
+                if device['status'] == 'connected':
+                    device['status'] = 1
+                else:
+                    device['status'] = 0
+                all_devices.append(device)
+            
+            # 转换datetime对象
+            all_devices = self._convert_datetime_to_string(all_devices)
+            
+            return {"success": True, "data": all_devices}
+            
+        except Exception as e:
+            logger.error(f"获取用户设备失败: {e}")
+            return {"success": False, "message": f"获取设备失败: {str(e)}"}
+    
+    def register_device(self, device_data: Dict[str, Any]) -> Dict[str, Any]:
+        """注册新设备（统一处理AI设备和健康设备）"""
+        try:
+            device_type = device_data.get('deviceType', 'health_monitor')
+            user_id = device_data.get('userId', device_data.get('user_id', 1))
+            
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if device_type == 'companion':
+                # 注册为AI智能陪伴设备 - 使用正确的表结构
+                device_id = f"AI_{str(uuid.uuid4()).replace('-', '')[:16]}"
+                
+                # 获取用户的默认智能体ID
+                cursor.execute("SELECT default_ai_agent_id FROM ec_users WHERE id = %s", (user_id,))
+                user_result = cursor.fetchone()
+                default_agent_id = user_result[0] if user_result and user_result[0] else None
+                
+                sql = """
+                INSERT INTO ai_device (
+                    id, user_id, alias, mac_address, agent_id, create_date, update_date,
+                    creator
+                ) VALUES (%s, %s, %s, %s, %s, NOW(), NOW(), %s)
+                """
+                
+                cursor.execute(sql, (
+                    device_id,
+                    user_id,
+                    device_data.get('deviceName', 'AI设备'),
+                    f"MAC_{str(uuid.uuid4()).replace('-', '')[:12]}",  # 生成模拟MAC地址
+                    default_agent_id,
+                    user_id
+                ))
+                
+            else:
+                # 注册为健康监测设备
+                # 获取用户的第一个AI智能体ID作为关联
+                cursor.execute("SELECT id FROM ai_agent WHERE user_id = %s LIMIT 1", [user_id])
+                agent_result = cursor.fetchone()
+                ai_agent_id = agent_result['id'] if agent_result else f"EC_default_{user_id}"
+                
+                sql = """
+                INSERT INTO ec_health_devices (
+                    user_id, ai_agent_id, plugin_id, device_name, device_type, 
+                    device_brand, device_model, connection_status, 
+                    health_features, mac_address, creator
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'disconnected', %s, %s, %s)
+                """
+                
+                health_features = json.dumps({
+                    "heart_rate": True,
+                    "blood_pressure": True,
+                    "blood_oxygen": True,
+                    "temperature": True
+                }, ensure_ascii=False)
+                
+                # 生成插件ID
+                plugin_id = f"HEALTH_{device_data.get('deviceType', 'MONITOR')}_{str(uuid.uuid4()).replace('-', '')[:8]}"
+                
+                cursor.execute(sql, (
+                    user_id,
+                    ai_agent_id,
+                    plugin_id,
+                    device_data.get('deviceName', '健康设备'),
+                    device_data.get('deviceType', 'health_monitor'),
+                    device_data.get('model', '未知品牌'),
+                    device_data.get('model', '未知型号'),
+                    health_features,
+                    f"MAC_{str(uuid.uuid4()).replace('-', '')[:12]}",  # 生成模拟MAC地址
+                    user_id
+                ))
+            
+            device_id = cursor.lastrowid
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"设备注册成功: ID={device_id}, 类型={device_type}")
+            return {
+                "success": True, 
+                "message": "设备注册成功", 
+                "device_id": device_id
+            }
+            
+        except Exception as e:
+            logger.error(f"注册设备错误: {e}")
+            return {"success": False, "message": f"注册失败: {str(e)}"}
+    
+    def delete_device(self, device_id, user_id: int = None) -> Dict[str, Any]:
+        """删除设备"""
+        conn = None
+        cursor = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 先查找设备是在哪个表中
+            # ai_device表的id是字符串类型，ec_health_devices表的id是数字类型
+            ai_device_sql = "SELECT id FROM ai_device WHERE id = %s"
+            health_device_sql = "SELECT id FROM ec_health_devices WHERE id = %s"
+            
+            # 先尝试作为字符串查找AI设备
+            cursor.execute(ai_device_sql, (str(device_id),))
+            ai_device = cursor.fetchone()
+            
+            if ai_device:
+                # 删除AI设备（使用字符串类型的device_id）
+                if user_id:
+                    delete_sql = "DELETE FROM ai_device WHERE id = %s AND user_id = %s"
+                    cursor.execute(delete_sql, (str(device_id), user_id))
+                else:
+                    delete_sql = "DELETE FROM ai_device WHERE id = %s"
+                    cursor.execute(delete_sql, (str(device_id),))
+                
+                if cursor.rowcount > 0:
+                    conn.commit()
+                    return {"success": True, "message": "AI设备删除成功"}
+            else:
+                # 检查健康设备（尝试作为数字ID）
+                try:
+                    device_id_int = int(device_id)
+                    cursor.execute(health_device_sql, (device_id_int,))
+                    health_device = cursor.fetchone()
+                    
+                    if health_device:
+                        # 软删除健康设备（设置is_active=0）
+                        if user_id:
+                            update_sql = "UPDATE ec_health_devices SET is_active = 0 WHERE id = %s AND user_id = %s"
+                            cursor.execute(update_sql, (device_id_int, user_id))
+                        else:
+                            update_sql = "UPDATE ec_health_devices SET is_active = 0 WHERE id = %s"
+                            cursor.execute(update_sql, (device_id_int,))
+                        
+                        if cursor.rowcount > 0:
+                            conn.commit()
+                            return {"success": True, "message": "健康设备删除成功"}
+                except (ValueError, TypeError):
+                    # 如果device_id不是数字，则不是健康设备
+                    pass
+            
+            return {"success": False, "message": "设备不存在或无权删除"}
+            
+        except Exception as e:
+            logger.error(f"删除设备错误: {e}")
+            return {"success": False, "message": f"删除失败: {str(e)}"}
+        finally:
+            # 确保资源正确释放
+            try:
+                if cursor:
+                    cursor.close()
+                if conn:
+                    conn.close()
+            except Exception as cleanup_error:
+                logger.error(f"数据库连接清理错误: {cleanup_error}")
+    
+    def update_device(self, device_id: int, update_data: Dict[str, Any], user_id: int = None) -> Dict[str, Any]:
+        """更新设备信息"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 先确定设备类型
+            ai_device_sql = "SELECT id FROM ai_device WHERE id = %s"
+            cursor.execute(ai_device_sql, (device_id,))
+            is_ai_device = cursor.fetchone() is not None
+            
+            if is_ai_device:
+                # 更新AI设备
+                update_fields = []
+                values = []
+                
+                allowed_fields = ['device_name', 'alias', 'location', 'status']
+                for field in allowed_fields:
+                    if field in update_data:
+                        update_fields.append(f"{field} = %s")
+                        values.append(update_data[field])
+                
+                if update_fields:
+                    values.append(device_id)
+                    if user_id:
+                        sql = f"UPDATE ai_device SET {', '.join(update_fields)}, update_date = NOW() WHERE id = %s AND user_id = %s"
+                        values.append(user_id)
+                    else:
+                        sql = f"UPDATE ai_device SET {', '.join(update_fields)}, update_date = NOW() WHERE id = %s"
+                    
+                    cursor.execute(sql, values)
+                    
+            else:
+                # 更新健康设备
+                update_fields = []
+                values = []
+                
+                allowed_fields = ['device_name', 'device_type', 'device_brand', 'device_model', 'connection_status']
+                for field in allowed_fields:
+                    if field in update_data:
+                        update_fields.append(f"{field} = %s")
+                        values.append(update_data[field])
+                
+                if update_fields:
+                    values.append(device_id)
+                    if user_id:
+                        sql = f"UPDATE ec_health_devices SET {', '.join(update_fields)}, update_date = NOW() WHERE id = %s AND user_id = %s"
+                        values.append(user_id)
+                    else:
+                        sql = f"UPDATE ec_health_devices SET {', '.join(update_fields)}, update_date = NOW() WHERE id = %s"
+                    
+                    cursor.execute(sql, values)
+            
+            if cursor.rowcount > 0:
+                cursor.close()
+                conn.close()
+                return {"success": True, "message": "设备更新成功"}
+            else:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "设备不存在或无权更新"}
+                
+        except Exception as e:
+            logger.error(f"更新设备错误: {e}")
+            return {"success": False, "message": f"更新失败: {str(e)}"}
 
     def _convert_datetime_to_string(self, data):
         """递归转换数据中的datetime对象和Decimal对象为字符串"""
@@ -1676,21 +3487,8 @@ class ElderCareAPI:
                 # 如果get_reminders方法不存在，使用空列表
                 pass
             
-            # 获取紧急呼救记录 (目前使用模拟数据)
-            emergency_calls = [
-                {
-                    "id": 1,
-                    "timestamp": "2025-09-21 14:30:00",
-                    "notes": "检测到心率异常",
-                    "status": "resolved"
-                },
-                {
-                    "id": 2, 
-                    "timestamp": "2025-09-20 10:15:00",
-                    "notes": "紧急按钮被按下",
-                    "status": "resolved"
-                }
-            ]
+            # 获取紧急呼救记录 (从数据库获取真实数据)
+            emergency_calls = self.get_user_emergency_calls_sync(user_id, days=7)
             
             # 确定设备状态和最后活动时间
             device_status = "online" if health_data else "offline"

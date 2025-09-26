@@ -26,27 +26,53 @@ function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   
-  const deviceId = 'demo-device-001' // 默认设备ID，实际应用中应该从用户登录信息获取
-
   const loadDashboardData = async () => {
     try {
       setLoading(true)
       setError(null)
       
-      // 获取监护数据
-      const data = await ElderCareAPI.getMonitorData(deviceId, 1) // 获取1天数据
+      // 获取当前用户ID作为deviceId参数
+      const currentUser = ElderCareAPI.getCurrentUser()
+      const userId = currentUser?.id || 1
       
-      if (data) {
-        setHealthData(data.health_data || [])
-        setReminders(data.reminders || [])
-        setEmergencyCalls(data.emergency_calls || [])
+      // 获取真实的健康数据
+      const [healthResponse, reminderResponse] = await Promise.all([
+        ElderCareAPI.getHealthData(userId, 1), // 获取近1天的健康数据
+        ElderCareAPI.getHealthReminders(userId) // 获取用户提醒
+      ])
+      
+      if (healthResponse && healthResponse.success) {
+        setHealthData(healthResponse.data || [])
+      } else {
+        console.warn('获取健康数据失败:', healthResponse?.message)
+        setHealthData([])
       }
       
-      // 获取设备状态
+      if (reminderResponse && reminderResponse.success) {
+        setReminders(reminderResponse.data || [])
+      } else {
+        console.warn('获取提醒数据失败:', reminderResponse?.message)
+        setReminders([])
+      }
+      
+      // 设置空的紧急呼叫数据，因为这个数据在当前数据库中没有
+      setEmergencyCalls([])
+      
+      // 获取设备状态 - 使用用户的智能陪伴设备
       try {
-        const deviceInfo = await ElderCareAPI.getDeviceStatus(deviceId)
-        setDeviceStatus(deviceInfo.status === 'online' ? 'online' : 'offline')
-        setLastActivity(deviceInfo.last_activity || '未知')
+        // 先获取用户的AI设备列表
+        const devicesResponse = await ElderCareAPI.getUserAIDevices(userId)
+        if (devicesResponse.success && devicesResponse.data && devicesResponse.data.length > 0) {
+          // 使用第一个AI设备作为智能陪伴设备
+          const userDevice = devicesResponse.data[0]
+          const deviceInfo = await ElderCareAPI.getDeviceStatus(userDevice.id || userDevice.device_id)
+          setDeviceStatus(deviceInfo.status === 'online' ? 'online' : 'offline')
+          setLastActivity(deviceInfo.last_activity || '未知')
+        } else {
+          // 用户没有智能陪伴设备
+          setDeviceStatus('offline')
+          setLastActivity('未配置智能陪伴设备')
+        }
       } catch (err) {
         console.warn('Device status unavailable:', err)
         setDeviceStatus('offline')
@@ -62,11 +88,7 @@ function Dashboard() {
 
   useEffect(() => {
     loadDashboardData()
-    
-    // 设置定时刷新
-    const interval = setInterval(loadDashboardData, 30000) // 30秒刷新一次
-    
-    return () => clearInterval(interval)
+    // 移除自动刷新，改为手动刷新
   }, [])
 
   // 计算今日健康指标
@@ -78,12 +100,17 @@ function Dashboard() {
   }).length
 
   // 转换健康数据格式用于图表显示
-  const chartData = healthData.slice(-24).reverse().map(item => ({
-    time: new Date(item.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-    heartRate: item.heart_rate,
-    bloodPressure: item.blood_pressure_systolic,
-    temperature: item.temperature
+  const chartData = healthData.slice(-12).reverse().map((item, index) => ({
+    time: new Date(item.timestamp).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }),
+    heartRate: item.heart_rate || 0,
+    bloodPressure: item.blood_pressure_systolic || 0,
+    temperature: item.body_temperature || 0
   }))
+  
+  // 如果没有真实数据，创建示例数据用于图表显示
+  const displayChartData = chartData.length > 0 ? chartData : [
+    { time: '今日', heartRate: 0, bloodPressure: 0, temperature: 0 }
+  ]
 
   if (loading) {
     return (
@@ -173,19 +200,53 @@ function Dashboard() {
       {/* 健康数据图表 */}
       <Card>
         <CardHeader>
-          <CardTitle>今日健康趋势</CardTitle>
-          <CardDescription>实时监测老人的健康指标变化</CardDescription>
+          <CardTitle>近期健康趋势</CardTitle>
+          <CardDescription>
+            {healthData.length > 0 ? 
+              `展示最近${healthData.length}天的健康数据趋势` : 
+              '暂无健康数据'
+            }
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {chartData.length > 0 ? (
+          {displayChartData.length > 0 && displayChartData[0].heartRate > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={chartData}>
+              <LineChart data={displayChartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="time" />
                 <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="heartRate" stroke="#8884d8" name="心率" />
-                <Line type="monotone" dataKey="bloodPressure" stroke="#82ca9d" name="血压" />
+                <Tooltip 
+                  formatter={(value, name) => {
+                    if (name === '心率') return [`${value} BPM`, name]
+                    if (name === '收缩压') return [`${value} mmHg`, name]
+                    if (name === '体温') return [`${value}°C`, name]
+                    return [value, name]
+                  }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="heartRate" 
+                  stroke="#8884d8" 
+                  name="心率" 
+                  strokeWidth={2}
+                  dot={{ fill: '#8884d8', strokeWidth: 2, r: 4 }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="bloodPressure" 
+                  stroke="#82ca9d" 
+                  name="收缩压" 
+                  strokeWidth={2}
+                  dot={{ fill: '#82ca9d', strokeWidth: 2, r: 4 }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="temperature" 
+                  stroke="#ffc658" 
+                  name="体温" 
+                  strokeWidth={2}
+                  dot={{ fill: '#ffc658', strokeWidth: 2, r: 4 }}
+                />
               </LineChart>
             </ResponsiveContainer>
           ) : (
@@ -193,7 +254,12 @@ function Dashboard() {
               <div className="text-center">
                 <Activity className="h-12 w-12 mx-auto mb-4 opacity-50" />
                 <p>暂无健康数据</p>
-                <p className="text-sm">等待设备数据同步...</p>
+                <p className="text-sm">
+                  {healthData.length === 0 ? 
+                    '等待设备数据同步...' : 
+                    '当前用户暂无健康监测数据'
+                  }
+                </p>
               </div>
             </div>
           )}

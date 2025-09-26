@@ -70,69 +70,134 @@ function DemoAccountValidator() {
     
     try {
       // 测试健康数据API
-      const healthResponse = await ElderCareAPI.getHealthData(userId, 1)
+      const healthResponse = await ElderCareAPI.getHealthData(userId, 7)
       apiTests.health = {
         status: healthResponse.success ? 'success' : 'error',
         message: healthResponse.success ? '健康数据API可用' : '健康数据API不可用',
         data: healthResponse.data,
-        usedMock: ElderCareAPI.currentMode === 'mock' || !healthResponse.success
+        usedMock: ElderCareAPI.currentMode === 'mock' || !healthResponse.success,
+        count: healthResponse.data ? healthResponse.data.length : 0
       }
     } catch (error) {
       apiTests.health = {
         status: 'error',
         message: `健康数据API错误: ${error.message}`,
-        usedMock: true
+        usedMock: true,
+        count: 0
       }
     }
     
     try {
       // 测试提醒API
-      const remindersResponse = await ElderCareAPI.get_reminders(userId)
+      const remindersResponse = await ElderCareAPI.getHealthReminders(userId)
       apiTests.reminders = {
         status: remindersResponse.success ? 'success' : 'error',
         message: remindersResponse.success ? '提醒API可用' : '提醒API不可用',
         data: remindersResponse.data,
-        usedMock: ElderCareAPI.currentMode === 'mock' || !remindersResponse.success
+        usedMock: ElderCareAPI.currentMode === 'mock' || !remindersResponse.success,
+        count: remindersResponse.data ? remindersResponse.data.length : 0
       }
     } catch (error) {
       apiTests.reminders = {
         status: 'error',
         message: `提醒API错误: ${error.message}`,
-        usedMock: true
+        usedMock: true,
+        count: 0
       }
     }
     
     try {
-      // 测试设备API
-      const deviceResponse = await ElderCareAPI.getUserDevices(userId)
-      apiTests.devices = {
-        status: deviceResponse.success ? 'success' : 'error',
-        message: deviceResponse.success ? '设备API可用' : '设备API不可用',
-        data: deviceResponse.data,
-        usedMock: ElderCareAPI.currentMode === 'mock' || !deviceResponse.success
+      // 测试AI设备API
+      const aiDeviceResponse = await ElderCareAPI.getUserAIDevices(userId)
+      apiTests.aiDevices = {
+        status: aiDeviceResponse.success ? 'success' : 'error',
+        message: aiDeviceResponse.success ? 'AI设备API可用' : 'AI设备API不可用',
+        data: aiDeviceResponse.data,
+        usedMock: ElderCareAPI.currentMode === 'mock' || !aiDeviceResponse.success,
+        count: aiDeviceResponse.data ? aiDeviceResponse.data.length : 0
       }
     } catch (error) {
-      apiTests.devices = {
+      apiTests.aiDevices = {
         status: 'error',
-        message: `设备API错误: ${error.message}`,
-        usedMock: true
+        message: `AI设备API错误: ${error.message}`,
+        usedMock: true,
+        count: 0
+      }
+    }
+    
+    try {
+      // 测试健康设备API
+      const healthDeviceResponse = await ElderCareAPI.getUserHealthDevices(userId)
+      apiTests.healthDevices = {
+        status: healthDeviceResponse.success ? 'success' : 'error',
+        message: healthDeviceResponse.success ? '健康设备API可用' : '健康设备API不可用',
+        data: healthDeviceResponse.data,
+        usedMock: ElderCareAPI.currentMode === 'mock' || !healthDeviceResponse.success,
+        count: healthDeviceResponse.data ? healthDeviceResponse.data.length : 0
+      }
+    } catch (error) {
+      apiTests.healthDevices = {
+        status: 'error',
+        message: `健康设备API错误: ${error.message}`,
+        usedMock: true,
+        count: 0
       }
     }
     
     try {
       // 测试智能体API
-      const agentsResponse = await ElderCareAPI.getAgents(userId)
+      const agentsResponse = await ElderCareAPI.getUserAgents(userId)
       apiTests.agents = {
         status: agentsResponse.success ? 'success' : 'error',
         message: agentsResponse.success ? '智能体API可用' : '智能体API不可用',
         data: agentsResponse.data,
-        usedMock: ElderCareAPI.currentMode === 'mock' || !agentsResponse.success
+        usedMock: ElderCareAPI.currentMode === 'mock' || !agentsResponse.success,
+        count: agentsResponse.data ? agentsResponse.data.length : 0
       }
     } catch (error) {
       apiTests.agents = {
         status: 'error',
         message: `智能体API错误: ${error.message}`,
-        usedMock: true
+        usedMock: true,
+        count: 0
+      }
+    }
+    
+    try {
+      // 测试声音克隆API
+      const voiceResponse = await ElderCareAPI.getVoiceClones(userId)
+      apiTests.voice = {
+        status: voiceResponse.success ? 'success' : 'error',
+        message: voiceResponse.success ? '声音克隆API可用' : '声音克隆API不可用',
+        data: voiceResponse.data,
+        usedMock: ElderCareAPI.currentMode === 'mock' || !voiceResponse.success,
+        count: voiceResponse.data ? voiceResponse.data.length : 0
+      }
+    } catch (error) {
+      apiTests.voice = {
+        status: 'error',
+        message: `声音克隆API错误: ${error.message}`,
+        usedMock: true,
+        count: 0
+      }
+    }
+    
+    try {
+      // 测试监控数据API
+      const monitorResponse = await ElderCareAPI.getMonitorData(userId, 1)
+      apiTests.monitor = {
+        status: monitorResponse.success ? 'success' : 'error',
+        message: monitorResponse.success ? '监控数据API可用' : '监控数据API不可用',
+        data: monitorResponse,
+        usedMock: ElderCareAPI.currentMode === 'mock' || !monitorResponse.success,
+        count: monitorResponse.health_data ? monitorResponse.health_data.length : 0
+      }
+    } catch (error) {
+      apiTests.monitor = {
+        status: 'error',
+        message: `监控数据API错误: ${error.message}`,
+        usedMock: true,
+        count: 0
       }
     }
     
@@ -329,6 +394,7 @@ function DemoAccountValidator() {
                           <th className="px-4 py-3 text-left text-sm font-medium">API服务</th>
                           <th className="px-4 py-3 text-left text-sm font-medium">状态</th>
                           <th className="px-4 py-3 text-left text-sm font-medium">数据来源</th>
+                          <th className="px-4 py-3 text-left text-sm font-medium">数据量</th>
                           <th className="px-4 py-3 text-left text-sm font-medium">信息</th>
                         </tr>
                       </thead>
@@ -338,8 +404,11 @@ function DemoAccountValidator() {
                             <td className="px-4 py-3 text-sm font-medium">{
                               key === 'health' ? '健康数据API' :
                               key === 'reminders' ? '提醒API' :
-                              key === 'devices' ? '设备API' :
-                              key === 'agents' ? '智能体API' : key
+                              key === 'aiDevices' ? 'AI设备API' :
+                              key === 'healthDevices' ? '健康设备API' :
+                              key === 'agents' ? '智能体API' :
+                              key === 'voice' ? '声音克隆API' :
+                              key === 'monitor' ? '监控数据API' : key
                             }</td>
                             <td className="px-4 py-3 text-sm">
                               {getStatusBadge(value.status)}
@@ -350,6 +419,11 @@ function DemoAccountValidator() {
                                 className={value.usedMock ? 'text-amber-500 border-amber-500' : 'bg-green-500'}
                               >
                                 {value.usedMock ? '使用模拟数据' : '使用真实API'}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              <Badge variant="secondary">
+                                {value.count || 0} 条记录
                               </Badge>
                             </td>
                             <td className="px-4 py-3 text-sm">
@@ -364,23 +438,47 @@ function DemoAccountValidator() {
                   <div className="space-y-2">
                     <h3 className="text-lg font-semibold">API响应数据</h3>
                     <Tabs defaultValue="health">
-                      <TabsList>
+                      <TabsList className="grid w-full grid-cols-3">
                         <TabsTrigger value="health">健康数据</TabsTrigger>
-                        <TabsTrigger value="reminders">提醒</TabsTrigger>
-                        <TabsTrigger value="devices">设备</TabsTrigger>
-                        <TabsTrigger value="agents">智能体</TabsTrigger>
+                        <TabsTrigger value="devices">设备管理</TabsTrigger>
+                        <TabsTrigger value="others">其他APIs</TabsTrigger>
                       </TabsList>
-                      <TabsContent value="health" className="p-4 bg-muted/30 rounded-md mt-2">
-                        <pre className="text-xs overflow-auto max-h-40">{apiResults.health?.data ? JSON.stringify(apiResults.health.data, null, 2) : '无数据'}</pre>
+                      <TabsContent value="health" className="space-y-3">
+                        <div className="p-4 bg-muted/30 rounded-md">
+                          <div className="text-sm mb-2 font-medium">健康数据API响应 ({apiResults.health?.count || 0} 条记录)</div>
+                          <pre className="text-xs overflow-auto max-h-40">{apiResults.health?.data ? JSON.stringify(apiResults.health.data.slice(0, 3), null, 2) : '无数据'}</pre>
+                          {apiResults.health?.count > 3 && (
+                            <div className="text-xs text-muted-foreground mt-2">... 还有 {apiResults.health.count - 3} 条记录</div>
+                          )}
+                        </div>
+                        <div className="p-4 bg-muted/30 rounded-md">
+                          <div className="text-sm mb-2 font-medium">监控数据API响应 ({apiResults.monitor?.count || 0} 条记录)</div>
+                          <pre className="text-xs overflow-auto max-h-40">{apiResults.monitor?.data ? JSON.stringify(apiResults.monitor.data, null, 2) : '无数据'}</pre>
+                        </div>
                       </TabsContent>
-                      <TabsContent value="reminders" className="p-4 bg-muted/30 rounded-md mt-2">
-                        <pre className="text-xs overflow-auto max-h-40">{apiResults.reminders?.data ? JSON.stringify(apiResults.reminders.data, null, 2) : '无数据'}</pre>
+                      <TabsContent value="devices" className="space-y-3">
+                        <div className="p-4 bg-muted/30 rounded-md">
+                          <div className="text-sm mb-2 font-medium">AI设备API响应 ({apiResults.aiDevices?.count || 0} 条记录)</div>
+                          <pre className="text-xs overflow-auto max-h-40">{apiResults.aiDevices?.data ? JSON.stringify(apiResults.aiDevices.data, null, 2) : '无数据'}</pre>
+                        </div>
+                        <div className="p-4 bg-muted/30 rounded-md">
+                          <div className="text-sm mb-2 font-medium">健康设备API响应 ({apiResults.healthDevices?.count || 0} 条记录)</div>
+                          <pre className="text-xs overflow-auto max-h-40">{apiResults.healthDevices?.data ? JSON.stringify(apiResults.healthDevices.data, null, 2) : '无数据'}</pre>
+                        </div>
                       </TabsContent>
-                      <TabsContent value="devices" className="p-4 bg-muted/30 rounded-md mt-2">
-                        <pre className="text-xs overflow-auto max-h-40">{apiResults.devices?.data ? JSON.stringify(apiResults.devices.data, null, 2) : '无数据'}</pre>
-                      </TabsContent>
-                      <TabsContent value="agents" className="p-4 bg-muted/30 rounded-md mt-2">
-                        <pre className="text-xs overflow-auto max-h-40">{apiResults.agents?.data ? JSON.stringify(apiResults.agents.data, null, 2) : '无数据'}</pre>
+                      <TabsContent value="others" className="space-y-3">
+                        <div className="p-4 bg-muted/30 rounded-md">
+                          <div className="text-sm mb-2 font-medium">智能体API响应 ({apiResults.agents?.count || 0} 条记录)</div>
+                          <pre className="text-xs overflow-auto max-h-40">{apiResults.agents?.data ? JSON.stringify(apiResults.agents.data, null, 2) : '无数据'}</pre>
+                        </div>
+                        <div className="p-4 bg-muted/30 rounded-md">
+                          <div className="text-sm mb-2 font-medium">提醒API响应 ({apiResults.reminders?.count || 0} 条记录)</div>
+                          <pre className="text-xs overflow-auto max-h-40">{apiResults.reminders?.data ? JSON.stringify(apiResults.reminders.data, null, 2) : '无数据'}</pre>
+                        </div>
+                        <div className="p-4 bg-muted/30 rounded-md">
+                          <div className="text-sm mb-2 font-medium">声音克隆API响应 ({apiResults.voice?.count || 0} 条记录)</div>
+                          <pre className="text-xs overflow-auto max-h-40">{apiResults.voice?.data ? JSON.stringify(apiResults.voice.data, null, 2) : '无数据'}</pre>
+                        </div>
                       </TabsContent>
                     </Tabs>
                   </div>

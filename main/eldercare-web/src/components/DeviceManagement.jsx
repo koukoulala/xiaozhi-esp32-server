@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx';
 import { Button } from '@/components/ui/button.jsx';
 import { Badge } from '@/components/ui/badge.jsx';
 import { Alert, AlertDescription } from '@/components/ui/alert.jsx';
@@ -20,7 +19,7 @@ import {
   WifiOff,
   CheckCircle
 } from 'lucide-react';
-import ElderCareAPI from '@/services/api.js';
+import ElderCareAPI from '../services/api.js';
 
 function DeviceManagement() {
   const navigate = useNavigate();
@@ -28,17 +27,20 @@ function DeviceManagement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [userId, setUserId] = useState(null);
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [addingDevice, setAddingDevice] = useState(false);
   const [newDevice, setNewDevice] = useState({
     deviceName: '',
-    deviceType: 'companion',
+    deviceType: 'health',
+    aiDeviceId: '',
     location: '',
-    model: ''
+    description: ''
   });
 
   useEffect(() => {
     loadDevices();
+    // 移除自动刷新，改为手动刷新
   }, []);
 
   const loadDevices = async () => {
@@ -47,15 +49,41 @@ function DeviceManagement() {
       setError(null);
       
       const currentUser = ElderCareAPI.getCurrentUser();
-      const response = await ElderCareAPI.getUserDevices(currentUser?.id || 1);
-      
-      if (response.success && response.data) {
-        setDevices(response.data);
-      } else {
-        setError('加载设备列表失败');
+      if (!currentUser) {
+        navigate('/login');
+        return;
       }
+      
+      setUserId(currentUser.id);
+
+      // 获取AI设备和健康设备
+      const [aiDevicesResponse, healthDevicesResponse] = await Promise.all([
+        ElderCareAPI.getUserAIDevices(currentUser.id),
+        ElderCareAPI.getUserHealthDevices(currentUser.id)
+      ]);
+
+      let aiDevices = [];
+      let healthDevices = [];
+
+      if (aiDevicesResponse.success && Array.isArray(aiDevicesResponse.data)) {
+        aiDevices = aiDevicesResponse.data;
+      }
+
+      if (healthDevicesResponse.success && Array.isArray(healthDevicesResponse.data)) {
+        healthDevices = healthDevicesResponse.data;
+      }
+
+      // 构建层级结构 - 每个AI设备关联其健康设备
+      const devicesWithAssociations = aiDevices.map(aiDevice => ({
+        ...aiDevice,
+        device_category: 'ai',
+        healthDevices: healthDevices.filter(hd => hd.ai_device_id === aiDevice.id)
+      }));
+
+      setDevices(devicesWithAssociations);
+      
     } catch (err) {
-      setError('加载设备失败: ' + err.message);
+      setError('加载设备列表失败: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -66,31 +94,40 @@ function DeviceManagement() {
       setError('请填写设备名称');
       return;
     }
-    
+
+    if (newDevice.deviceType === 'health' && !newDevice.aiDeviceId) {
+      setError('添加健康设备时必须选择关联的AI设备');
+      return;
+    }
+
     try {
       setAddingDevice(true);
       setError(null);
-      setSuccess(null);
       
-      const currentUser = ElderCareAPI.getCurrentUser();
       const deviceData = {
-        userId: currentUser?.id || 1,
+        userId: userId,
         deviceName: newDevice.deviceName.trim(),
         deviceType: newDevice.deviceType,
-        location: newDevice.location.trim() || '未指定',
-        model: newDevice.model.trim() || '未知型号'
+        location: newDevice.location.trim(),
+        description: newDevice.description.trim()
       };
-      
-      const response = await ElderCareAPI.registerDevice(deviceData);
+
+      // 如果是健康设备，添加AI设备关联
+      if (newDevice.deviceType === 'health') {
+        deviceData.aiDeviceId = newDevice.aiDeviceId;
+      }
+
+      const response = await ElderCareAPI.addDevice(deviceData);
       
       if (response.success) {
         setSuccess('设备添加成功');
         setShowAddDevice(false);
         setNewDevice({
           deviceName: '',
-          deviceType: 'companion',
+          deviceType: 'health',
+          aiDeviceId: '',
           location: '',
-          model: ''
+          description: ''
         });
         loadDevices();
       } else {
@@ -103,19 +140,20 @@ function DeviceManagement() {
     }
   };
 
-  const handleDeleteDevice = async (deviceId, deviceName) => {
-    if (!confirm(`确定要删除设备"${deviceName}"吗？`)) {
+  const handleDeleteDevice = async (deviceId, deviceType) => {
+    if (!confirm(`确定要删除这个${deviceType === 'ai' ? 'AI' : '健康监测'}设备吗？`)) {
       return;
     }
-    
+
     try {
-      const response = await ElderCareAPI.deleteDevice(deviceId);
+      setError(null);
+      const response = await ElderCareAPI.deleteDevice(deviceId, deviceType);
       
       if (response.success) {
-        setSuccess(`设备"${deviceName}"删除成功`);
+        setSuccess('设备删除成功');
         loadDevices();
       } else {
-        setError('删除设备失败');
+        setError(response.message || '删除设备失败');
       }
     } catch (err) {
       setError('删除设备失败: ' + err.message);
@@ -123,31 +161,37 @@ function DeviceManagement() {
   };
 
   const getStatusBadge = (status) => {
-    switch (status) {
-      case 1:
-      case 'online':
-        return <Badge><Wifi className="h-3 w-3 mr-1" />在线</Badge>;
-      case 0:
-      case 'offline':
-        return <Badge variant="secondary"><WifiOff className="h-3 w-3 mr-1" />离线</Badge>;
-      default:
-        return <Badge variant="outline">未知</Badge>;
-    }
+    const isOnline = status === 1 || status === 'online';
+    return (
+      <Badge variant={isOnline ? 'default' : 'secondary'} className="flex items-center">
+        {isOnline ? (
+          <>
+            <Wifi className="h-3 w-3 mr-1" />
+            在线
+          </>
+        ) : (
+          <>
+            <WifiOff className="h-3 w-3 mr-1" />
+            离线
+          </>
+        )}
+      </Badge>
+    );
   };
 
-  const deviceList = Array.isArray(devices) ? devices : [];
-  const companionDevices = deviceList.filter(d => d.device_type === 'companion' || d.device_type === 'ai_companion');
-  const healthDevices = deviceList.filter(d => d.device_type === 'health_monitor');
+  const totalHealthDeviceCount = devices.reduce((count, device) => 
+    count + (device.healthDevices ? device.healthDevices.length : 0), 0
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold">设备管理</h2>
-          <p className="text-muted-foreground">管理您的智能设备</p>
+          <p className="text-muted-foreground">管理您的AI智能设备和健康监测设备</p>
         </div>
-        <Button onClick={() => setShowAddDevice(!showAddDevice)}>
-          <Plus className="h-4 w-4 mr-2" />
+        <Button onClick={() => setShowAddDevice(true)} className="flex items-center gap-2">
+          <Plus className="h-4 w-4" />
           添加设备
         </Button>
       </div>
@@ -160,64 +204,85 @@ function DeviceManagement() {
       )}
 
       {success && (
-        <Alert>
-          <CheckCircle className="h-4 w-4" />
-          <AlertDescription>{success}</AlertDescription>
+        <Alert className="border-green-200 bg-green-50">
+          <CheckCircle className="h-4 w-4 text-green-600" />
+          <AlertDescription className="text-green-800">{success}</AlertDescription>
         </Alert>
       )}
 
+      {/* 添加设备对话框 */}
       {showAddDevice && (
         <Card>
           <CardHeader>
             <CardTitle>添加新设备</CardTitle>
+            <CardDescription>添加AI智能设备或健康监测设备</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>设备名称</Label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="deviceName">设备名称 *</Label>
                 <Input
-                  placeholder="输入设备名称"
+                  id="deviceName"
                   value={newDevice.deviceName}
                   onChange={(e) => setNewDevice(prev => ({...prev, deviceName: e.target.value}))}
+                  placeholder="输入设备名称"
                 />
               </div>
-              <div className="space-y-2">
-                <Label>设备类型</Label>
-                <Select 
-                  value={newDevice.deviceType} 
-                  onValueChange={(value) => setNewDevice(prev => ({...prev, deviceType: value}))}
-                >
+              <div>
+                <Label htmlFor="deviceType">设备类型 *</Label>
+                <Select value={newDevice.deviceType} onValueChange={(value) => setNewDevice(prev => ({...prev, deviceType: value, aiDeviceId: ''}))}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="companion">智能陪伴设备</SelectItem>
-                    <SelectItem value="health_monitor">健康监测设备</SelectItem>
+                    <SelectItem value="ai">AI智能陪伴设备</SelectItem>
+                    <SelectItem value="health">健康监测设备</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
-            
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>安装位置</Label>
+
+            {/* 健康设备需要选择关联的AI设备 */}
+            {newDevice.deviceType === 'health' && (
+              <div>
+                <Label htmlFor="aiDeviceId">关联AI设备 *</Label>
+                <Select value={newDevice.aiDeviceId} onValueChange={(value) => setNewDevice(prev => ({...prev, aiDeviceId: value}))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择要关联的AI设备" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {devices.map((device) => (
+                      <SelectItem key={device.id} value={device.id}>
+                        {device.device_name || `AI设备 ${device.id}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="location">安装位置</Label>
                 <Input
-                  placeholder="如：客厅、卧室"
+                  id="location"
                   value={newDevice.location}
                   onChange={(e) => setNewDevice(prev => ({...prev, location: e.target.value}))}
+                  placeholder="如：客厅、卧室等"
                 />
               </div>
-              <div className="space-y-2">
-                <Label>设备型号</Label>
+              <div>
+                <Label htmlFor="description">设备描述</Label>
                 <Input
-                  placeholder="如：ESP32-Pro"
-                  value={newDevice.model}
-                  onChange={(e) => setNewDevice(prev => ({...prev, model: e.target.value}))}
+                  id="description"
+                  value={newDevice.description}
+                  onChange={(e) => setNewDevice(prev => ({...prev, description: e.target.value}))}
+                  placeholder="设备的简单描述"
                 />
               </div>
             </div>
-            
-            <div className="flex space-x-2">
+
+            <div className="flex gap-2">
               <Button onClick={handleAddDevice} disabled={addingDevice}>
                 {addingDevice ? (
                   <>
@@ -225,10 +290,25 @@ function DeviceManagement() {
                     添加中...
                   </>
                 ) : (
-                  '添加设备'
+                  <>
+                    <Plus className="h-4 w-4 mr-2" />
+                    添加设备
+                  </>
                 )}
               </Button>
-              <Button variant="outline" onClick={() => setShowAddDevice(false)}>
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setShowAddDevice(false);
+                  setNewDevice({
+                    deviceName: '',
+                    deviceType: 'health',
+                    aiDeviceId: '',
+                    location: '',
+                    description: ''
+                  });
+                }}
+              >
                 取消
               </Button>
             </div>
@@ -236,142 +316,138 @@ function DeviceManagement() {
         </Card>
       )}
 
-      <Tabs defaultValue="companion" className="w-full">
-        <TabsList>
-          <TabsTrigger value="companion">智能陪伴设备 ({companionDevices.length})</TabsTrigger>
-          <TabsTrigger value="health">健康监测设备 ({healthDevices.length})</TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="companion">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Smartphone className="h-5 w-5 mr-2" />
-                智能陪伴设备
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="text-center py-8">
-                  <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-2" />
-                  加载中...
-                </div>
-              ) : companionDevices.length === 0 ? (
-                <div className="text-center py-8">
-                  <Smartphone className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground">暂无陪伴设备</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {companionDevices.map((device) => (
-                    <div key={device.id} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center">
-                          <Smartphone className="h-5 w-5" />
-                          <div className="ml-2">
-                            <h4 className="font-medium">{device.device_name}</h4>
-                            <p className="text-sm text-muted-foreground">{device.location}</p>
-                          </div>
-                        </div>
-                        {getStatusBadge(device.status)}
-                      </div>
-                      <div className="space-y-1 text-sm text-muted-foreground">
-                        <div>设备ID: {device.id}</div>
-                        <div>最后在线: {device.last_online ? new Date(device.last_online).toLocaleString('zh-CN') : '未知'}</div>
-                      </div>
-                      <div className="flex space-x-2 mt-3">
-                        <Button size="sm" variant="outline" onClick={() => navigate(`/devices/${device.id}`)}>
-                          <Settings className="h-3 w-3 mr-1" />
-                          详情
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => navigate(`/devices/${device.id}/monitor`)}>
-                          <Activity className="h-3 w-3 mr-1" />
-                          监控
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="destructive"
-                          onClick={() => handleDeleteDevice(device.id, device.device_name)}
-                        >
-                          <Trash2 className="h-3 w-3 mr-1" />
-                          删除
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        <TabsContent value="health">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center">
-                <Activity className="h-5 w-5 mr-2" />
-                健康监测设备
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="text-center py-8">
-                  <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-2" />
-                  加载中...
-                </div>
-              ) : healthDevices.length === 0 ? (
-                <div className="text-center py-8">
-                  <Activity className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-muted-foreground">暂无健康设备</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {healthDevices.map((device) => (
-                    <div key={device.id} className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center">
-                          <Activity className="h-5 w-5" />
-                          <div className="ml-2">
-                            <h4 className="font-medium">{device.device_name}</h4>
-                            <p className="text-sm text-muted-foreground">{device.location}</p>
-                          </div>
-                        </div>
-                        {getStatusBadge(device.status)}
-                      </div>
-                      <div className="space-y-1 text-sm text-muted-foreground">
-                        <div>设备ID: {device.id}</div>
-                        <div>最后在线: {device.last_online ? new Date(device.last_online).toLocaleString('zh-CN') : '未知'}</div>
-                      </div>
-                      <div className="flex space-x-2 mt-3">
-                        <Button size="sm" variant="outline" onClick={() => navigate(`/devices/${device.id}`)}>
-                          <Settings className="h-3 w-3 mr-1" />
-                          详情
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => navigate(`/devices/${device.id}/monitor`)}>
-                          <Activity className="h-3 w-3 mr-1" />
-                          监控
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="destructive"
-                          onClick={() => handleDeleteDevice(device.id, device.device_name)}
-                        >
-                          <Trash2 className="h-3 w-3 mr-1" />
-                          删除
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      {/* 设备列表 */}
+      <div className="space-y-4">
+        {/* 设备总数信息 */}
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-gray-600">
+            共 {devices.length} 个AI设备，{totalHealthDeviceCount} 个健康监测设备
+          </div>
+        </div>
 
-      <div className="flex justify-end">
-        <Button onClick={loadDevices} variant="outline">
-          <RefreshCw className="h-4 w-4 mr-2" />
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <RefreshCw className="h-6 w-6 animate-spin mr-2" />
+            加载设备中...
+          </div>
+        ) : devices.length === 0 ? (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center py-8 text-center">
+              <Smartphone className="h-12 w-12 text-muted-foreground mb-4" />
+              <p className="text-muted-foreground">暂无设备</p>
+              <p className="text-sm text-muted-foreground">点击上方"添加设备"按钮添加您的第一个设备</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-6">
+            {devices.map((aiDevice) => (
+              <div key={aiDevice.id} className="space-y-4">
+                {/* AI设备卡片 */}
+                <Card className="border-blue-200">
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <div className="flex items-center space-x-2">
+                      <Smartphone className="h-5 w-5 text-blue-500" />
+                      <CardTitle className="text-lg">
+                        {aiDevice.device_name || aiDevice.alias || `AI设备 ${aiDevice.id}`}
+                      </CardTitle>
+                      <Badge variant="default">AI智能陪伴</Badge>
+                    </div>
+                    <div className="flex gap-2">
+                      {getStatusBadge(aiDevice.status)}
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => handleDeleteDevice(aiDevice.id, 'ai')}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" />
+                        删除
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">MAC地址:</span>
+                        <p className="font-mono">{aiDevice.mac_address || '--'}</p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">智能体:</span>
+                        <p>{aiDevice.agent_name || '--'}</p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">位置:</span>
+                        <p>{aiDevice.location || '--'}</p>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">最后在线:</span>
+                        <p>{aiDevice.last_online ? new Date(aiDevice.last_online).toLocaleString() : '--'}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* 关联的健康设备 */}
+                {aiDevice.healthDevices && aiDevice.healthDevices.length > 0 && (
+                  <div className="ml-6 space-y-2">
+                    <h4 className="text-sm font-medium text-gray-700 flex items-center">
+                      <Activity className="h-4 w-4 mr-2 text-green-500" />
+                      关联的健康监测设备 ({aiDevice.healthDevices.length})
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {aiDevice.healthDevices.map((healthDevice) => (
+                        <Card key={healthDevice.id} className="border-green-100">
+                          <CardHeader className="pb-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <Activity className="h-4 w-4 text-green-500" />
+                                <CardTitle className="text-sm">
+                                  {healthDevice.device_name || '健康设备'}
+                                </CardTitle>
+                                <Badge variant="secondary">健康监测</Badge>
+                              </div>
+                              {getStatusBadge(healthDevice.connection_status)}
+                            </div>
+                          </CardHeader>
+                          <CardContent className="pt-0">
+                            <div className="space-y-1 text-xs">
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">类型:</span>
+                                <span>{healthDevice.device_type || '未知'}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">品牌:</span>
+                                <span>{healthDevice.device_brand || '未知'}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">电池:</span>
+                                <span>{healthDevice.battery_level ? `${healthDevice.battery_level}%` : '--'}</span>
+                              </div>
+                            </div>
+                            <div className="flex gap-2 mt-3">
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                onClick={() => handleDeleteDevice(healthDevice.id, 'health')}
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" />
+                                删除
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      
+      <div className="flex justify-center">
+        <Button variant="outline" onClick={loadDevices} disabled={loading}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
           刷新设备列表
         </Button>
       </div>

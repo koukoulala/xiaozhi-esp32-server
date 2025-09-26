@@ -34,8 +34,7 @@ function AgentManagement() {
     agent_name: '',
     agent_code: '',
     system_prompt: '',
-    llm_model_id: 'gpt-3.5-turbo',
-    tts_voice_name: 'xiaomo',
+    selectedTemplate: 'custom',
     is_default: false,
     memory_enabled: true,
     persona_traits: '',
@@ -51,32 +50,59 @@ function AgentManagement() {
       const currentUser = ElderCareAPI.getCurrentUser()
       
       // 加载用户的智能体
-      const agentsResponse = await ElderCareAPI.getAgents(currentUser?.id || 1)
+      const agentsResponse = await ElderCareAPI.getUserAgents(currentUser?.id || 1)
       
       if (agentsResponse.success && agentsResponse.data) {
         setAgents(agentsResponse.data)
+        console.log('加载的智能体列表:', agentsResponse.data)
       } else {
-        setError('加载智能体列表失败')
+        setError(agentsResponse.message || '加载智能体列表失败')
       }
       
-      // 加载智能体模板 (这里可以是预定义的模板)
-      setTemplates([
-        {
-          id: 'companion',
-          name: '陪伴助手',
-          prompt: '你是一位温暖体贴的智能陪伴助手，专门为老年朋友提供日常关怀和对话。你的任务是以亲切友好的方式与用户交流，关心他们的身体健康、情感状态，并在需要时提供实用的建议和帮助。'
-        },
-        {
-          id: 'health',
-          name: '健康顾问',
-          prompt: '你是一位专业的健康顾问助手，专注于为老年朋友提供健康相关的建议和指导。你需要关注用户的身体状况，提醒用药时间，分析健康数据，并在必要时建议就医。'
-        },
-        {
-          id: 'entertainment',
-          name: '娱乐伙伴',
-          prompt: '你是一位活泼有趣的娱乐伙伴，专门为老年朋友提供轻松愉快的互动体验。你可以讲笑话、分享有趣的故事、聊天解闷，让用户的生活更加丰富多彩。'
+      // 加载智能体模板（只获取ElderCare相关模板）
+      try {
+        const templatesResponse = await ElderCareAPI.getAgentTemplates()
+        if (templatesResponse.success && templatesResponse.data) {
+          // 只保留agent_code为ElderCare的模板
+          const eldercareTemplates = templatesResponse.data.filter(
+            template => template.id && template.id.includes('eldercare') || template.id.includes('ElderCare') || template.id.includes('EC_')
+          )
+          
+          // 添加自定义选项
+          setTemplates([
+            {
+              id: 'custom',
+              agent_name: '自定义',
+              system_prompt: ''
+            },
+            ...eldercareTemplates
+          ])
+        } else {
+          // 使用默认模板作为备用
+          setTemplates([
+            {
+              id: 'custom',
+              agent_name: '自定义',
+              system_prompt: ''
+            },
+            {
+              id: 'EC_eldercare_agent_template_001',
+              agent_name: '老人的智能助手',
+              system_prompt: '您是一位温暖贴心的养老助手，专门陪伴老年用户，提供日常生活的关怀和帮助。'
+            }
+          ])
         }
-      ])
+      } catch (err) {
+        console.warn('加载模板失败，使用默认模板:', err)
+        // 使用默认模板
+        setTemplates([
+          {
+            id: 'custom',
+            agent_name: '自定义',
+            system_prompt: ''
+          }
+        ])
+      }
       
     } catch (err) {
       console.error('加载数据失败:', err)
@@ -96,8 +122,7 @@ function AgentManagement() {
       agent_name: '',
       agent_code: '',
       system_prompt: '',
-      llm_model_id: 'gpt-3.5-turbo',
-      tts_voice_name: 'xiaomo',
+      selectedTemplate: 'custom',
       is_default: false,
       memory_enabled: true,
       persona_traits: '',
@@ -113,8 +138,7 @@ function AgentManagement() {
       agent_name: agent.agent_name || '',
       agent_code: agent.agent_code || '',
       system_prompt: agent.system_prompt || '',
-      llm_model_id: agent.llm_model_id || 'gpt-3.5-turbo',
-      tts_voice_name: agent.tts_voice_name || 'xiaomo',
+      selectedTemplate: 'custom', // 编辑时默认为自定义
       is_default: agent.default_agent || false,
       memory_enabled: agent.memory_enabled !== false,
       persona_traits: agent.persona_traits || '',
@@ -127,11 +151,21 @@ function AgentManagement() {
   const handleTemplateChange = (templateId) => {
     const template = templates.find(t => t.id === templateId)
     if (template) {
-      setFormData(prev => ({
-        ...prev,
-        system_prompt: template.prompt,
-        agent_name: prev.agent_name || template.name
-      }))
+      if (templateId === 'custom') {
+        // 自定义模式，不修改现有内容
+        setFormData(prev => ({
+          ...prev,
+          selectedTemplate: 'custom'
+        }))
+      } else {
+        // 使用模板内容
+        setFormData(prev => ({
+          ...prev,
+          system_prompt: template.system_prompt,
+          agent_name: prev.agent_name || template.agent_name,
+          selectedTemplate: templateId
+        }))
+      }
     }
   }
 
@@ -152,8 +186,6 @@ function AgentManagement() {
         agentName: formData.agent_name.trim(),
         agentCode: formData.agent_code.trim(),
         systemPrompt: formData.system_prompt.trim(),
-        llmModelId: formData.llm_model_id,
-        ttsVoiceName: formData.tts_voice_name,
         defaultAgent: formData.is_default,
         memoryEnabled: formData.memory_enabled,
         personaTraits: formData.persona_traits.trim(),
@@ -200,6 +232,23 @@ function AgentManagement() {
     } catch (err) {
       console.error('删除智能体失败:', err)
       setError(`删除失败: ${err.message}`)
+    }
+  }
+
+  const handleSetDefaultAgent = async (agentId, agentName) => {
+    try {
+      const currentUser = ElderCareAPI.getCurrentUser()
+      const response = await ElderCareAPI.setDefaultAgent(currentUser?.id || 1, agentId)
+      
+      if (response.success) {
+        setSuccess(`已将"${agentName}"设为默认智能体`)
+        loadData()
+      } else {
+        setError(response.message || '设置默认智能体失败')
+      }
+    } catch (err) {
+      console.error('设置默认智能体失败:', err)
+      setError(`设置失败: ${err.message}`)
     }
   }
 
@@ -275,22 +324,29 @@ function AgentManagement() {
               
               <div className="flex flex-wrap gap-2 text-xs">
                 <Badge variant="outline" className="flex items-center gap-1">
-                  <Mic className="h-3 w-3" />
-                  {agent.tts_voice_name || '默认语音'}
-                </Badge>
-                <Badge variant="outline" className="flex items-center gap-1">
-                  <Brain className="h-3 w-3" />
-                  {agent.llm_model_id || 'GPT-3.5'}
+                  <Bot className="h-3 w-3" />
+                  智能助手
                 </Badge>
                 {agent.memory_enabled && (
                   <Badge variant="outline" className="flex items-center gap-1">
-                    <Bot className="h-3 w-3" />
+                    <Settings className="h-3 w-3" />
                     记忆模式
                   </Badge>
                 )}
               </div>
 
               <div className="flex justify-end space-x-2">
+                {!agent.is_default && (
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => handleSetDefaultAgent(agent.id, agent.agent_name)}
+                    className="text-green-600 hover:text-green-700"
+                  >
+                    <CheckCircle className="h-3 w-3 mr-1" />
+                    设为默认
+                  </Button>
+                )}
                 <Button 
                   variant="outline" 
                   size="sm"
@@ -359,15 +415,15 @@ function AgentManagement() {
             </div>
 
             <div className="space-y-2">
-              <Label>角色模板 (快速设置)</Label>
-              <Select onValueChange={handleTemplateChange}>
+              <Label>角色模板</Label>
+              <Select value={formData.selectedTemplate} onValueChange={handleTemplateChange}>
                 <SelectTrigger>
-                  <SelectValue placeholder="选择角色模板或使用自定义设定" />
+                  <SelectValue placeholder="选择角色模板" />
                 </SelectTrigger>
                 <SelectContent>
                   {templates.map((template) => (
                     <SelectItem key={template.id} value={template.id}>
-                      {template.name}
+                      {template.agent_name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -383,44 +439,6 @@ function AgentManagement() {
                 onChange={(e) => setFormData(prev => ({ ...prev, system_prompt: e.target.value }))}
                 className="h-32"
               />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>AI模型</Label>
-                <Select
-                  value={formData.llm_model_id}
-                  onValueChange={(value) => setFormData(prev => ({ ...prev, llm_model_id: value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gpt-3.5-turbo">GPT-3.5 Turbo</SelectItem>
-                    <SelectItem value="gpt-4">GPT-4</SelectItem>
-                    <SelectItem value="claude-3">Claude-3</SelectItem>
-                    <SelectItem value="qwen">通义千问</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>语音音色</Label>
-                <Select
-                  value={formData.tts_voice_name}
-                  onValueChange={(value) => setFormData(prev => ({ ...prev, tts_voice_name: value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="xiaomo">小莫 (温和女声)</SelectItem>
-                    <SelectItem value="xiaoyu">小宇 (亲切男声)</SelectItem>
-                    <SelectItem value="xiaoxin">小新 (活泼女声)</SelectItem>
-                    <SelectItem value="xiaoyun">小云 (沉稳男声)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -497,6 +515,10 @@ function AgentManagement() {
                 />
               </div>
             </div>
+
+
+
+
 
             <div className="flex justify-end space-x-2">
               <Button variant="outline" onClick={() => setShowCreateForm(false)}>

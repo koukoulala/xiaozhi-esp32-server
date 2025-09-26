@@ -47,6 +47,8 @@ const UserLogin = ({ onLoginSuccess, onShowRegister }) => {
     try {
       const result = await ElderCareAPI.login(loginData.username, loginData.password)
       
+      console.log('登录结果:', result)
+      
       if (result.success && result.user) {
         setSuccess('登录成功！正在跳转...')
         setTimeout(() => {
@@ -57,6 +59,7 @@ const UserLogin = ({ onLoginSuccess, onShowRegister }) => {
       }
       
     } catch (err) {
+      console.error('登录失败:', err)
       setError(`登录失败: ${err.message}`)
     } finally {
       setLoading(false)

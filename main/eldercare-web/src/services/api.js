@@ -240,14 +240,17 @@ class ElderCareAPI {
       }
     }
     
-    // 对于关键端点，即使后端不可用也尝试请求
+    // 对于关键端点和语音API，即使后端不可用也尝试请求
     const criticalEndpoints = ['/auth/login', '/auth/register', '/config', '/auth/status'];
     const isCriticalEndpoint = criticalEndpoints.some(criticalEndpoint => 
       endpoint.includes(criticalEndpoint)
     );
     
-    // 后端不可用且非关键端点则使用模拟数据
-    if (!this.isBackendAvailable && !isCriticalEndpoint) {
+    // 语音API必须使用真实后端
+    const isVoiceAPI = endpoint.includes('/voice/') || endpoint.includes('/eldercare/voice');
+    
+    // 后端不可用且非关键端点且非语音API则使用模拟数据
+    if (!this.isBackendAvailable && !isCriticalEndpoint && !isVoiceAPI) {
       requestLog.usedMock = true;
       requestLog.reason = 'backend_unavailable_non_critical';
       this.logApiRequest(requestLog);
@@ -350,8 +353,9 @@ class ElderCareAPI {
         requestLog.reason = error.name === 'AbortError' ? 'timeout' : 'request_failed';
         this.logApiRequest(requestLog);
         
-        // 判断是否是关键端点
-        if (isCriticalRequest) {
+        // 判断是否是关键端点或语音API
+        const isVoiceAPI = endpoint.includes('/voice/') || endpoint.includes('/eldercare/voice');
+        if (isCriticalRequest || isVoiceAPI) {
           // 为AbortError提供更明确的错误信息
           if (error.name === 'AbortError') {
             throw new Error(`请求超时(${timeoutDuration}ms): ${endpoint}`);
@@ -525,19 +529,46 @@ class ElderCareAPI {
     }
 
     // 智能体数据
-    if (endpoint.includes('/agent')) {
+    if (endpoint.includes('/agent/list') || endpoint.includes('/agents')) {
       return {
         success: true,
         data: this.generateMockAgents()
       };
     }
 
-    // 声音克隆
-    if (endpoint.includes('/voice')) {
+    if (endpoint.includes('/agent/templates')) {
       return {
         success: true,
-        data: this.generateMockVoices()
+        data: this.generateMockAgentTemplates()
       };
+    }
+
+    if (endpoint.includes('/agent/set-default')) {
+      return {
+        success: true,
+        message: '默认智能体设置成功（模拟）'
+      };
+    }
+
+    if (endpoint.includes('/agent/create') || endpoint.includes('/agent/update')) {
+      return {
+        success: true,
+        message: '智能体操作成功（模拟）',
+        data: { id: Date.now() }
+      };
+    }
+
+    if (endpoint.includes('/agent/delete')) {
+      return {
+        success: true,
+        message: '智能体删除成功（模拟）'
+      };
+    }
+
+    // 语音相关API - 强制使用真实后端，不提供模拟数据
+    if (endpoint.includes('/voice/') || endpoint.includes('/eldercare/voice')) {
+      console.error(`❌ 语音API不支持模拟数据: ${endpoint}`);
+      throw new Error(`语音功能需要真实后端服务，请确保ElderCare服务器正在运行 (${endpoint})`);
     }
 
     // 默认成功响应
@@ -581,22 +612,49 @@ class ElderCareAPI {
   generateMockAgents() {
     return [
       {
-        id: 1,
-        name: '小智助手',
-        description: '专业的养老陪伴智能体',
-        status: 'active',
-        voice_id: 'voice_001',
-        personality: 'caring',
-        created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+        id: 'agent_001',
+        agent_code: 'ELDER_001',
+        agent_name: '小智助手',
+        system_prompt: '您是一位温暖贴心的养老助手，专门陪伴老年用户。',
+        tts_model_id: 1,
+        tts_voice_id: 1,
+        llm_model_id: 1,
+        created_at: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+        updated_at: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
       },
       {
-        id: 2,
-        name: '健康顾问',
-        description: '健康监测和建议专家',
-        status: 'active',
-        voice_id: 'voice_002',
-        personality: 'professional',
-        created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+        id: 'agent_002',
+        agent_code: 'HEALTH_001',
+        agent_name: '健康顾问',
+        system_prompt: '您是一位专业的健康管理顾问，为老年用户提供健康建议。',
+        tts_model_id: 2,
+        tts_voice_id: 2,
+        llm_model_id: 1,
+        created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+        updated_at: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString()
+      }
+    ];
+  }
+
+  /**
+   * 生成模拟智能体模板数据
+   */
+  generateMockAgentTemplates() {
+    return [
+      {
+        id: 'eldercare_companion',
+        agent_name: '智慧陪伴助手',
+        system_prompt: '您是一位温暖贴心的养老助手，专门陪伴老年用户，提供日常生活的关怀和帮助。'
+      },
+      {
+        id: 'health_monitor',
+        agent_name: '健康管理助手',
+        system_prompt: '您是一位专业的健康管理顾问，为老年用户提供健康监测、用药提醒和健康建议。'
+      },
+      {
+        id: 'emergency_assistant',
+        agent_name: '紧急救助助手',
+        system_prompt: '您是一位专业的紧急救助助手，在紧急情况下为老年用户提供快速响应和帮助。'
       }
     ];
   }
@@ -607,20 +665,64 @@ class ElderCareAPI {
   generateMockVoices() {
     return [
       {
-        id: 'voice_001',
-        name: '温柔女声',
-        description: '温暖亲切的女性声音',
-        language: 'zh-CN',
-        gender: 'female',
-        created_at: new Date().toISOString()
+        id: 'TTS_CosyVoiceClone302AI0001',
+        name: '奶奶的声音',
+        family_member_name: '奶奶',
+        relationship: 'grandparent',
+        reference_audio: '/data/audio_uploads/voice/user_23_grandma_voice.wav',
+        reference_text: '小宝贝，奶奶想你了，记得要好好吃饭，按时休息哦。',
+        creator: 23,
+        tts_model_id: 'TTS_CosyVoiceClone302AI',
+        tts_model_name: 'TTS_CosyVoiceClone302AI',
+        create_date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+        update_date: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+        audio_file_exists: true,
+        audio_file_size: 1024567,
+        remark: JSON.stringify({
+          family_member_name: '奶奶',
+          relationship: 'grandparent',
+          voice_description: '温暖慈祥的奶奶声音'
+        })
       },
       {
-        id: 'voice_002',
-        name: '稳重男声',
-        description: '沉稳可靠的男性声音',
-        language: 'zh-CN',
-        gender: 'male',
-        created_at: new Date().toISOString()
+        id: 'TTS_CosyVoiceClone302AI0002',
+        name: '爸爸的声音',
+        family_member_name: '爸爸',
+        relationship: 'parent',
+        reference_audio: '/data/audio_uploads/voice/user_23_father_voice.wav',
+        reference_text: '孩子，爸爸为你骄傲，要继续努力，保持健康快乐。',
+        creator: 23,
+        tts_model_id: 'TTS_CosyVoiceClone302AI',
+        tts_model_name: 'TTS_CosyVoiceClone302AI',
+        create_date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+        update_date: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        audio_file_exists: true,
+        audio_file_size: 892134,
+        remark: JSON.stringify({
+          family_member_name: '爸爸',
+          relationship: 'parent',
+          voice_description: '严肃又温暖的父亲声音'
+        })
+      },
+      {
+        id: 'TTS_CosyVoiceClone302AI0003',
+        name: '女儿的声音',
+        family_member_name: '女儿',
+        relationship: 'child',
+        reference_audio: '/data/audio_uploads/voice/user_23_daughter_voice.wav',
+        reference_text: '妈妈，我爱你！记得按时吃药，我会经常回来看你的。',
+        creator: 23,
+        tts_model_id: 'TTS_CosyVoiceClone302AI',
+        tts_model_name: 'TTS_CosyVoiceClone302AI',
+        create_date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+        update_date: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+        audio_file_exists: true,
+        audio_file_size: 756821,
+        remark: JSON.stringify({
+          family_member_name: '女儿',
+          relationship: 'child',
+          voice_description: '甜美关爱的女儿声音'
+        })
       }
     ];
   }
@@ -636,16 +738,35 @@ class ElderCareAPI {
       body: JSON.stringify({ username, password })
     });
 
-    if (result.success && result.data) {
-      this.currentUser = result.data;
-      localStorage.setItem('eldercare_user', JSON.stringify(result.data));
-      localStorage.setItem('eldercare_token', result.data.token || 'mock_token');
+    console.log('API登录响应:', result);
+
+    if (result.success && (result.user || result.data)) {
+      // 处理可能的数据结构差异
+      const userData = result.user || result.data;
+      
+      console.log('原始用户数据:', userData);
+      
+      // 标准化用户数据
+      const normalizedUser = {
+        id: userData.id || userData.user_id,
+        username: userData.username,
+        realName: userData.real_name || userData.realName || userData.username,
+        elderName: userData.elder_name || userData.elderName || '',
+        phone: userData.phone || '',
+        token: userData.token || `login_token_${userData.id || userData.user_id}_${Date.now()}`
+      };
+      
+      this.currentUser = normalizedUser;
+      localStorage.setItem('eldercare_user', JSON.stringify(normalizedUser));
+      localStorage.setItem('eldercare_token', normalizedUser.token);
+      
+      console.log('登录成功，保存用户数据:', normalizedUser);
       
       // 确保返回格式正确，包含user属性
       return {
         success: true,
         message: result.message || '登录成功',
-        user: result.data
+        user: normalizedUser
       };
     }
 
@@ -653,11 +774,26 @@ class ElderCareAPI {
   }
 
   async register(userData) {
+    console.log('发送注册请求，数据:', userData);
+    
     // 使用通用请求方法
-    return this.request('/auth/register', {
+    const result = await this.request('/auth/register', {
       method: 'POST',
       body: JSON.stringify(userData)
     });
+    
+    console.log('注册响应:', result);
+    
+    if (result.success) {
+      // 确保返回正确的用户ID
+      return {
+        success: true,
+        message: result.message || '注册成功',
+        user_id: result.user_id || result.data?.user_id || result.data?.id
+      };
+    }
+    
+    return result;
   }
 
   logout() {
@@ -670,9 +806,26 @@ class ElderCareAPI {
     if (!this.currentUser) {
       try {
         const stored = localStorage.getItem('eldercare_user');
-        this.currentUser = stored ? JSON.parse(stored) : null;
+        const token = localStorage.getItem('eldercare_token');
+        
+        if (stored && token && token !== 'null' && token !== 'undefined') {
+          const parsedUser = JSON.parse(stored);
+          // 验证用户对象的完整性
+          if (parsedUser && (parsedUser.id || parsedUser.user_id)) {
+            this.currentUser = parsedUser;
+            console.log('从localStorage恢复用户:', this.currentUser);
+            return this.currentUser;
+          }
+        }
+        
+        // 如果数据无效，清理localStorage
+        localStorage.removeItem('eldercare_user');
+        localStorage.removeItem('eldercare_token');
+        return null;
       } catch (error) {
         console.error('解析用户数据失败:', error);
+        localStorage.removeItem('eldercare_user');
+        localStorage.removeItem('eldercare_token');
         return null;
       }
     }
@@ -697,7 +850,7 @@ class ElderCareAPI {
    * 获取健康数据
    */
   async getHealthData(userId, days = 7) {
-    return this.request(`/health/data?userId=${userId}&days=${days}`);
+    return this.request(`/health/data?user_id=${userId}&days=${days}`);
   }
   
   /**
@@ -732,6 +885,13 @@ class ElderCareAPI {
     });
   }
 
+  async addDevice(deviceData) {
+    return this.request('/eldercare/device/add', {
+      method: 'POST',
+      body: JSON.stringify(deviceData)
+    });
+  }
+
   /**
    * 智能体管理
    */
@@ -743,7 +903,7 @@ class ElderCareAPI {
    * 获取用户智能体列表
    */
   async getUserAgents(userId) {
-    return this.request(`/agent/list?userId=${userId}`);
+    return this.request(`/agents?user_id=${userId}`);
   }
 
   async createAgent(agentData) {
@@ -767,17 +927,127 @@ class ElderCareAPI {
   }
 
   /**
+   * 设置默认智能体
+   */
+  async setDefaultAgent(userId, agentId) {
+    return this.request('/agent/set-default', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, agent_id: agentId })
+    });
+  }
+
+  /**
+   * 获取智能体模板
+   */
+  async getAgentTemplates() {
+    return this.request('/agent/templates');
+  }
+
+  /**
    * 声音克隆
    */
-  async getVoiceClones(userId) {
-    return this.request(`/voice/list?user_id=${userId}`);
+  async getVoiceClones(userId, agentId = null) {
+    let url = `/voice/list?user_id=${userId}`;
+    if (agentId) {
+      url += `&agent_id=${agentId}`;
+    }
+    return this.request(url);
   }
 
   async createVoiceClone(voiceData) {
-    return this.request('/voice/clone', {
+    // 创建FormData对象用于文件上传
+    const formData = new FormData();
+    formData.append('userId', voiceData.userId);
+    formData.append('name', voiceData.name);
+    formData.append('referenceText', voiceData.referenceText);
+    formData.append('audioFile', voiceData.audioFile);
+    
+    // 支持agent_id和家庭成员信息
+    if (voiceData.agentId) {
+      formData.append('agent_id', voiceData.agentId);
+    }
+    if (voiceData.family_member_name) {
+      formData.append('family_member_name', voiceData.family_member_name);
+    }
+    if (voiceData.relationship) {
+      formData.append('relationship', voiceData.relationship);
+    }
+    if (voiceData.ttsModelId) {
+      formData.append('ttsModelId', voiceData.ttsModelId);
+    }
+
+    // 获取token用于认证
+    const token = localStorage.getItem('eldercare_token');
+    
+    // 直接使用fetch避免request方法设置默认Content-Type
+    const response = await fetch(`${this.baseURL}/voice/clone`, {
       method: 'POST',
-      body: JSON.stringify(voiceData)
+      headers: {
+        ...(token && { 'Authorization': `Bearer ${token}` })
+        // 不设置Content-Type，让浏览器自动设置multipart/form-data
+      },
+      body: formData
     });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  // 音色管理API
+  async setDefaultVoice(userId, voiceId) {
+    return this.request('/voice/set_default', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, voice_id: voiceId })
+    });
+  }
+
+  async deleteVoice(userId, voiceId) {
+    return this.request(`/voice/delete?user_id=${userId}&voice_id=${voiceId}`, {
+      method: 'DELETE'
+    });
+  }
+
+  async updateVoice(userId, voiceId, voiceData) {
+    if (voiceData.audioFile) {
+      // 文件上传格式
+      const formData = new FormData();
+      formData.append('user_id', userId);
+      formData.append('voice_id', voiceId);
+      formData.append('name', voiceData.name);
+      formData.append('referenceText', voiceData.referenceText);
+      if (voiceData.audioFile) {
+        formData.append('audioFile', voiceData.audioFile);
+      }
+
+      const token = localStorage.getItem('eldercare_token');
+      
+      const response = await fetch(`${this.baseURL}/voice/update`, {
+        method: 'POST',
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` })
+        },
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } else {
+      // JSON格式
+      return this.request('/voice/update', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: userId,
+          voice_id: voiceId,
+          ...voiceData
+        })
+      });
+    }
   }
 
   /**
@@ -799,6 +1069,59 @@ class ElderCareAPI {
    */
   async get_reminders(userId) {
     return this.request(`/reminders?user_id=${userId}`);
+  }
+
+  /**
+   * 设备删除
+   */
+  async deleteDevice(deviceId, userId = null) {
+    const url = `/device/delete/${deviceId}`;
+    const requestData = userId ? { user_id: userId } : {};
+    return this.request(url, {
+      method: 'DELETE',
+      body: JSON.stringify(requestData)
+    });
+  }
+
+  /**
+   * 设备更新
+   */
+  async updateDevice(deviceId, deviceData) {
+    return this.request(`/device/update/${deviceId}`, {
+      method: 'PUT',
+      body: JSON.stringify(deviceData)
+    });
+  }
+
+  /**
+   * 获取设备详细信息
+   */
+  async getDeviceDetails(deviceId, deviceType = 'ai') {
+    return this.request(`/device/details/${deviceId}?device_type=${deviceType}`);
+  }
+
+  /**
+   * 更新设备配置
+   */
+  async updateDeviceConfig(deviceId, configData, deviceType = 'ai') {
+    return this.request(`/device/config/${deviceId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ config_data: configData, device_type: deviceType })
+    });
+  }
+
+  /**
+   * 获取用户AI设备列表
+   */
+  async getUserAIDevices(userId) {
+    return this.request(`/device/ai_devices?user_id=${userId}`);
+  }
+
+  /**
+   * 获取用户健康设备列表
+   */
+  async getUserHealthDevices(userId) {
+    return this.request(`/device/health_devices?user_id=${userId}`);
   }
 
   /**

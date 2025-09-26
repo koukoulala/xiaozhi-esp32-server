@@ -234,9 +234,10 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
       const registrationData = {
         username: formData.username,
         password: formData.password,
+        email: '', // 可选字段
         elderInfo: {
           name: formData.elderName,
-          age: parseInt(formData.elderAge),
+          age: parseInt(formData.elderAge) || 0,
           gender: formData.elderGender,
           idCard: formData.elderIdCard,
           phone: formData.elderPhone
@@ -271,9 +272,11 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
         }
       }
       
-      console.log('提交注册数据:', registrationData.username);
+      console.log('提交注册数据:', registrationData);
       
       const result = await ElderCareAPI.register(registrationData)
+      
+      console.log('注册结果:', result);
       
       if (result.success) {
         setSuccess('注册成功！正在跳转到系统...')
