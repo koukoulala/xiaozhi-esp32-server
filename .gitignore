@@ -228,6 +228,3 @@ uploadfile
 *.pfx
 **/certs/
 **/certificates/
-
-# Exclude GitHub Actions workflow files to avoid token permission issues
-.github/workflows/
