@@ -1384,20 +1384,46 @@ class ElderCareAPI:
             logger.error(f"获取默认声音错误: {e}")
             return {"success": False, "message": f"获取失败: {str(e)}"}
 
-    def set_default_voice(self, user_id: int, voice_id: str) -> Dict[str, Any]:
-        """设置默认音色"""
+    def set_default_voice(self, user_id: int, voice_id: str, agent_id: str = None) -> Dict[str, Any]:
+        """设置默认音色（支持指定智能体）"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
-            # 获取用户的默认智能体
-            cursor.execute("SELECT default_ai_agent_id FROM ec_users WHERE id = %s", (user_id,))
+            # 如果没有指定智能体ID，则使用用户的默认智能体
+            if not agent_id:
+                cursor.execute("SELECT default_ai_agent_id FROM ec_users WHERE id = %s", (user_id,))
+                user_result = cursor.fetchone()
+                
+                if not user_result or not user_result['default_ai_agent_id']:
+                    return {"success": False, "message": "用户没有默认智能体"}
+                
+                agent_id = user_result['default_ai_agent_id']
+            
+            # 验证智能体是否属于该用户（通过ec_users表的owned_ai_agents字段）
+            cursor.execute("SELECT owned_ai_agents FROM ec_users WHERE id = %s", (user_id,))
             user_result = cursor.fetchone()
             
-            if not user_result or not user_result['default_ai_agent_id']:
-                return {"success": False, "message": "用户没有默认智能体"}
+            if not user_result:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "用户不存在"}
             
-            agent_id = user_result['default_ai_agent_id']
+            # 解析用户拥有的智能体列表
+            owned_agents = json.loads(user_result.get('owned_ai_agents', '[]'))
+            if agent_id not in owned_agents:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "智能体不存在或无权限"}
+            
+            # 验证智能体在ai_agent表中存在
+            cursor.execute("SELECT * FROM ai_agent WHERE id = %s", (agent_id,))
+            agent_result = cursor.fetchone()
+            
+            if not agent_result:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "智能体不存在"}
             
             # 验证音色是否存在且属于用户
             cursor.execute("SELECT * FROM ai_tts_voice WHERE id = %s AND creator = %s", (voice_id, user_id))
@@ -1406,14 +1432,14 @@ class ElderCareAPI:
             if not voice_result:
                 return {"success": False, "message": "音色不存在或无权限"}
             
-            # 更新智能体的默认音色
-            cursor.execute("UPDATE ai_agent SET tts_voice_id = %s WHERE id = %s", (voice_id, agent_id))
+            # 更新指定智能体的默认音色
+            cursor.execute("UPDATE ai_agent SET tts_voice_id = %s, updated_at = NOW() WHERE id = %s", (voice_id, agent_id))
             
             conn.commit()
             cursor.close()
             conn.close()
             
-            return {"success": True, "message": "默认音色设置成功"}
+            return {"success": True, "message": "默认音色设置成功", "agent_id": agent_id}
             
         except Exception as e:
             logger.error(f"设置默认音色失败: {e}")

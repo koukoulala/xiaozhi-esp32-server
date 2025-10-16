@@ -78,13 +78,14 @@ function AgentAnalytics() {
       if (analyticsResponse.success) {
         setAnalytics(analyticsResponse.data);
       } else {
-        // 如果API还没实现，使用模拟数据
-        setAnalytics(generateMockAnalytics());
+        // 修改：不再使用模拟数据，显示错误提示
+        setError('暂无分析数据或API未实现');
+        setAnalytics(null);
       }
     } catch (err) {
       setError(err.message);
-      // 出错时也使用模拟数据
-      setAnalytics(generateMockAnalytics());
+      // 修改：不再使用模拟数据
+      setAnalytics(null);
     } finally {
       setLoading(false);
     }

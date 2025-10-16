@@ -57,8 +57,10 @@ class ElderCareAPI {
       }
       
       if (forcedMode === 'mock') {
-        this.currentMode = 'mock';
-        this.isBackendAvailable = false;
+        console.warn('⚠️ 模拟数据模式已弃用，将使用真实API模式');
+        this.baseURL = API_CONFIG.REAL_API_URL;
+        this.currentMode = 'real';
+        this.isBackendAvailable = true;
         return;
       }
 
@@ -91,13 +93,14 @@ class ElderCareAPI {
       return;
     }
 
-    // 3. 都不可用时使用模拟数据
-    this.currentMode = 'mock';
+    // 3. 都不可用时标记为不可用，但仍尝试请求（可能是临时网络问题）
+    this.currentMode = 'unavailable';
     this.isBackendAvailable = false;
-    console.log('⚠️ 后端服务不可用，使用模拟数据模式');
+    console.error('❌ 后端服务不可用，请检查服务器状态');
+    console.error('提示: 所有API调用都将失败并返回错误');
     
-    // 在系统诊断页面可以切换模式，暂时先使用模拟数据保证UI可用
-    console.log('提示: 可以在系统诊断页面手动设置API模式');
+    // 尝试设置一个默认的baseURL以便重试
+    this.baseURL = API_CONFIG.REAL_API_URL;
   }
 
   /**
@@ -209,16 +212,16 @@ class ElderCareAPI {
       isCritical: isCriticalRequest
     };
     
-    // 如果强制使用模拟数据模式，直接返回模拟数据
-    if (this.currentMode === 'mock') {
-      requestLog.usedMock = true;
-      requestLog.reason = 'mock_mode_forced';
-      this.logApiRequest(requestLog);
-      return this.getMockResponse(endpoint, options);
-    }
+    // 注释：不再强制使用模拟数据，始终优先尝试真实API
+    // if (this.currentMode === 'mock') {
+    //   requestLog.usedMock = true;
+    //   requestLog.reason = 'mock_mode_forced';
+    //   this.logApiRequest(requestLog);
+    //   return this.getMockResponse(endpoint, options);
+    // }
 
-    // 如果后端不可用且非强制模式，尝试重新检测后端
-    if (!this.isBackendAvailable && this.currentMode !== 'mock') {
+    // 如果后端不可用，尝试重新检测后端
+    if (!this.isBackendAvailable) {
       console.log('后端可能恢复，尝试重新检测API可用性...');
       
       // 优先尝试并行检测两个服务
@@ -249,13 +252,15 @@ class ElderCareAPI {
     // 语音API必须使用真实后端
     const isVoiceAPI = endpoint.includes('/voice/') || endpoint.includes('/eldercare/voice');
     
-    // 后端不可用且非关键端点且非语音API则使用模拟数据
-    if (!this.isBackendAvailable && !isCriticalEndpoint && !isVoiceAPI) {
-      requestLog.usedMock = true;
-      requestLog.reason = 'backend_unavailable_non_critical';
-      this.logApiRequest(requestLog);
-      return this.getMockResponse(endpoint, options);
-    }
+    // 注释：移除自动fallback到模拟数据的逻辑
+    // 现在即使后端标记为不可用，也会尝试真实API请求
+    // 只有在请求完全失败后才考虑使用模拟数据
+    // if (!this.isBackendAvailable && !isCriticalEndpoint && !isVoiceAPI) {
+    //   requestLog.usedMock = true;
+    //   requestLog.reason = 'backend_unavailable_non_critical';
+    //   this.logApiRequest(requestLog);
+    //   return this.getMockResponse(endpoint, options);
+    // }
 
     const url = `${this.baseURL}${endpoint}`;
     const token = localStorage.getItem('eldercare_token');
@@ -349,22 +354,18 @@ class ElderCareAPI {
         // 记录错误信息
         requestLog.error = error.message || (error.name === 'AbortError' ? '请求超时' : '请求失败');
         requestLog.success = false;
-        requestLog.usedMock = true;
+        requestLog.usedMock = false; // 修改：不再自动使用模拟数据
         requestLog.reason = error.name === 'AbortError' ? 'timeout' : 'request_failed';
         this.logApiRequest(requestLog);
         
-        // 判断是否是关键端点或语音API
-        const isVoiceAPI = endpoint.includes('/voice/') || endpoint.includes('/eldercare/voice');
-        if (isCriticalRequest || isVoiceAPI) {
-          // 为AbortError提供更明确的错误信息
-          if (error.name === 'AbortError') {
-            throw new Error(`请求超时(${timeoutDuration}ms): ${endpoint}`);
-          }
-          throw error;
+        // 为AbortError提供更明确的错误信息
+        if (error.name === 'AbortError') {
+          throw new Error(`请求超时(${timeoutDuration}ms): ${endpoint}`);
         }
         
-        // 请求失败时降级到模拟数据
-        return this.getMockResponse(endpoint, options);
+        // 修改：所有API失败都抛出错误，不再fallback到模拟数据
+        // 让调用方决定如何处理错误
+        throw error;
       }
     }
   }
@@ -392,10 +393,16 @@ class ElderCareAPI {
 
   /**
    * 获取模拟数据响应
+   * ⚠️ 警告：此方法已弃用，不应在生产环境中使用
+   * 如果执行到这里，说明API请求失败且没有正确处理错误
    */
   getMockResponse(endpoint, options) {
-    console.log(`📊 使用模拟数据: ${endpoint}`);
-    console.warn(`警告: 使用了模拟数据而非真实API - ${endpoint}`);
+    console.error(`❌ 严重警告: 不应该使用模拟数据 - ${endpoint}`);
+    console.error(`请检查后端服务是否正常运行，或者在调用API时正确处理错误`);
+    console.warn(`⚠️ 此功能已被弃用，仅用于调试目的`);
+    
+    // 抛出错误而不是返回模拟数据
+    throw new Error(`API调用失败且无可用数据: ${endpoint}. 请确保后端服务正常运行。`);
     
     // 将使用的模拟数据记录到localStorage中，用于诊断
     const mockApiUsage = JSON.parse(localStorage.getItem('eldercare_mock_api_usage') || '{}');
@@ -997,10 +1004,14 @@ class ElderCareAPI {
   }
 
   // 音色管理API
-  async setDefaultVoice(userId, voiceId) {
+  async setDefaultVoice(userId, voiceId, agentId = null) {
     return this.request('/voice/set_default', {
       method: 'POST',
-      body: JSON.stringify({ user_id: userId, voice_id: voiceId })
+      body: JSON.stringify({ 
+        user_id: userId, 
+        voice_id: voiceId,
+        agent_id: agentId  // 添加智能体ID参数
+      })
     });
   }
 

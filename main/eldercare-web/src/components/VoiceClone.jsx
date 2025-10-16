@@ -131,12 +131,32 @@ function VoiceClone() {
     loadData();
   }, [userId]);
 
-  // 当选择的智能体改变时，重新加载语音数据
+  // 当选择的智能体改变时，重新加载该智能体的语音数据
   useEffect(() => {
     if (userId && selectedAgent) {
-      loadData();
+      loadVoicesForAgent(selectedAgent);
     }
   }, [selectedAgent]);
+  
+  // 加载指定智能体的语音数据
+  const loadVoicesForAgent = async (agentId) => {
+    try {
+      console.log('正在加载智能体的语音数据, agentId:', agentId);
+      const voicesResponse = await ElderCareAPI.getVoiceClones(userId, agentId);
+      console.log('getVoiceClones响应:', voicesResponse);
+      
+      if (voicesResponse.success && Array.isArray(voicesResponse.data)) {
+        console.log('成功获取到', voicesResponse.data.length, '条语音数据');
+        setVoiceClones(voicesResponse.data);
+      } else {
+        console.warn('语音API调用失败或返回空数据:', voicesResponse);
+        setVoiceClones([]);
+      }
+    } catch (err) {
+      console.error('Load voices error:', err);
+      setVoiceClones([]);
+    }
+  };
 
   // 开始录音
   const startRecording = async () => {
@@ -193,37 +213,79 @@ function VoiceClone() {
 
   // 提交语音克隆
   const handleSubmit = async () => {
-    if (!audioBlob || !voiceName.trim() || !selectedAgent) {
-      setError('请完成所有必填信息');
-      return;
+    // 编辑模式下，音频文件是可选的（如果不上传新音频，就保留原音频）
+    if (editingVoice) {
+      if (!voiceName.trim() || !selectedAgent) {
+        setError('请完成所有必填信息');
+        return;
+      }
+    } else {
+      // 创建模式下，音频文件是必须的
+      if (!audioBlob || !voiceName.trim() || !selectedAgent) {
+        setError('请完成所有必填信息');
+        return;
+      }
     }
 
     try {
       setIsSubmitting(true);
       setError(null);
 
-      const voiceData = {
-        userId: userId,
-        agentId: selectedAgent ? selectedAgent.id : null,
-        name: voiceName.trim(),
-        referenceText: referenceText.trim(),
-        audioFile: audioBlob,
-        family_member_name: voiceName.trim(), // 使用语音名称作为家庭成员名称
-        relationship: 'family' // 默认关系为家庭成员
-      };
+      if (editingVoice) {
+        // 更新模式
+        const voiceData = {
+          userId: userId,
+          voiceId: editingVoice.id,
+          name: voiceName.trim(),
+          referenceText: referenceText.trim(),
+        };
 
-      const result = await ElderCareAPI.createVoiceClone(voiceData);
-      
-      if (result.success) {
-        setSuccess('语音克隆创建成功！');
-        resetForm();
-        loadData(); // 重新加载数据
-        setTimeout(() => setSuccess(null), 3000);
+        // 如果有新的音频文件，则包含它
+        if (audioBlob) {
+          voiceData.audioFile = audioBlob;
+        }
+
+        const result = await ElderCareAPI.updateVoice(userId, editingVoice.id, voiceData);
+        
+        if (result.success) {
+          setSuccess('语音更新成功！');
+          resetForm();
+          // 重新加载当前智能体的语音数据
+          if (selectedAgent) {
+            loadVoicesForAgent(selectedAgent);
+          }
+          setTimeout(() => setSuccess(null), 3000);
+        } else {
+          setError(result.message || '更新失败');
+        }
       } else {
-        setError(result.message || '创建失败');
+        // 创建模式
+        const voiceData = {
+          userId: userId,
+          agentId: selectedAgent, // selectedAgent已经是agent的ID字符串
+          name: voiceName.trim(),
+          referenceText: referenceText.trim(),
+          audioFile: audioBlob,
+          family_member_name: voiceName.trim(), // 使用语音名称作为家庭成员名称
+          relationship: 'family' // 默认关系为家庭成员
+        };
+
+        const result = await ElderCareAPI.createVoiceClone(voiceData);
+        
+        if (result.success) {
+          setSuccess('语音克隆创建成功！');
+          resetForm();
+          // 修改：只重新加载当前智能体的语音数据
+          if (selectedAgent) {
+            loadVoicesForAgent(selectedAgent);
+          }
+          setTimeout(() => setSuccess(null), 3000);
+        } else {
+          setError(result.message || '创建失败');
+        }
       }
     } catch (err) {
-      setError('创建语音克隆失败: ' + err.message);
+      setError((editingVoice ? '更新' : '创建') + '语音克隆失败: ' + err.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -242,15 +304,32 @@ function VoiceClone() {
 
   // 设置为默认语音
   const setAsDefault = async (voiceId) => {
-    if (!currentAgent) return;
+    if (!selectedAgent) {
+      setError('请先选择智能体');
+      return;
+    }
 
     try {
       setIsSubmitting(true);
-      const result = await ElderCareAPI.setDefaultVoice(userId, voiceId);
+      // 修改：传递当前选择的智能体ID，而不是使用默认智能体
+      const result = await ElderCareAPI.setDefaultVoice(userId, voiceId, selectedAgent);
       
       if (result.success) {
-        setSuccess('默认语音设置成功');
-        loadData();
+        setSuccess(`已为智能体"${currentAgent?.agent_name}"设置默认语音`);
+        
+        // 关键修复：重新加载智能体列表，更新 currentAgent 的 tts_voice_id
+        const agentsResponse = await ElderCareAPI.getUserAgents(userId);
+        if (agentsResponse.success && Array.isArray(agentsResponse.data)) {
+          setUserAgents(agentsResponse.data);
+          // 更新当前选择的智能体信息
+          const updatedAgent = agentsResponse.data.find(agent => agent.id === selectedAgent);
+          if (updatedAgent) {
+            setCurrentAgent(updatedAgent);
+          }
+        }
+        
+        // 重新加载当前智能体的语音数据
+        loadVoicesForAgent(selectedAgent);
         setTimeout(() => setSuccess(null), 3000);
       } else {
         setError(result.message || '设置失败');
@@ -272,7 +351,10 @@ function VoiceClone() {
       
       if (result.success) {
         setSuccess('语音删除成功');
-        loadData();
+        // 修改：只重新加载当前智能体的语音数据
+        if (selectedAgent) {
+          loadVoicesForAgent(selectedAgent);
+        }
         setTimeout(() => setSuccess(null), 3000);
       } else {
         setError(result.message || '删除失败');
@@ -536,7 +618,9 @@ function VoiceClone() {
 
             {/* 录音区域 */}
             <div className="space-y-4">
-              <Label htmlFor="recording">录制音频 *</Label>
+              <Label htmlFor="recording">
+                录制音频 {editingVoice ? '(可选 - 不上传则保留原音频)' : '*'}
+              </Label>
               <div className="bg-gray-50 p-4 rounded-lg space-y-4">
                 <div className="flex items-center space-x-4">
                   <Button
@@ -625,7 +709,7 @@ function VoiceClone() {
               </Button>
               <Button 
                 onClick={handleSubmit} 
-                disabled={!audioBlob || !voiceName.trim() || !selectedAgent || isSubmitting}
+                disabled={(!editingVoice && !audioBlob) || !voiceName.trim() || !selectedAgent || isSubmitting}
               >
                 {isSubmitting ? (
                   <>

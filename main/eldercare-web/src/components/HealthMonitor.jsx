@@ -240,7 +240,7 @@ function HealthMonitor() {
                 </Badge>
               </CardTitle>
               <CardDescription>
-                实时监测健康状况 - 数据来源于真实健康监测设备
+                实时监测健康状况
                 {healthData.length > 0 && (
                   <span className="ml-2 text-blue-600">
                     (已加载 {healthData.length} 条记录)

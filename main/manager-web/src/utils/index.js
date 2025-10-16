@@ -1,6 +1,7 @@
 import { Message } from 'element-ui'
 import router from '../router'
 import Constant from '../utils/constant'
+import { sm2 } from 'sm-crypto'
 
 /**
  * 判断用户是否登录
@@ -208,7 +209,6 @@ export function validateMobile(mobile, areaCode) {
  */
 export function generateSm2KeyPairHex() {
     // 使用sm-crypto库生成SM2密钥对
-    const sm2 = require('sm-crypto').sm2;
     const keypair = sm2.generateKeyPairHex();
     
     return {
@@ -234,7 +234,6 @@ export function sm2Encrypt(publicKey, plainText) {
         throw new Error('明文不能为空');
     }
     
-    const sm2 = require('sm-crypto').sm2;
     // SM2加密，添加04前缀表示未压缩公钥
     const encrypted = sm2.doEncrypt(plainText, publicKey, 1);
     // 转换为十六进制格式（与后端保持一致，添加04前缀）
@@ -250,7 +249,6 @@ export function sm2Encrypt(publicKey, plainText) {
  * @returns {string} 解密后的明文
  */
 export function sm2Decrypt(privateKey, cipherText) {
-    const sm2 = require('sm-crypto').sm2;
     // 移除04前缀（与后端保持一致）
     const dataWithoutPrefix = cipherText.startsWith("04") ? cipherText.substring(2) : cipherText;
     // SM2解密

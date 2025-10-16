@@ -520,17 +520,18 @@ async def create_voice_clone_handler(request: Request) -> Response:
 # =========================== 音色管理API ===========================
 
 async def set_default_voice_handler(request: Request) -> Response:
-    """设置默认音色"""
+    """设置默认音色（支持指定智能体）"""
     try:
         data = await request.json()
         user_id = int(data.get('user_id', 0))
         voice_id = data.get('voice_id', '')
+        agent_id = data.get('agent_id')  # 可选参数：指定智能体ID
         
         eldercare_api = get_eldercare_api()
         if not eldercare_api:
             return web.json_response({'success': False, 'message': 'ElderCare API未初始化'})
         
-        result = eldercare_api.set_default_voice(user_id, voice_id)
+        result = eldercare_api.set_default_voice(user_id, voice_id, agent_id)
         return web.json_response(result)
     except Exception as e:
         return web.json_response({'success': False, 'message': str(e)})
