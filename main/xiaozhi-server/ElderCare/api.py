@@ -2544,30 +2544,160 @@ class ElderCareAPI:
             return {"success": False, "message": str(e)}
     
     async def bind_device(self, agent_id: str, device_code: str, user_id: int) -> Dict[str, Any]:
-        """绑定设备到智能体（路由接口）"""
+        """使用6位验证码绑定AI陪伴设备到智能体
+        
+        这个方法对接 manager-api 的设备激活流程：
+        1. 从 Redis 获取设备ID（通过6位验证码）
+        2. 获取设备详细信息（从Redis缓存）
+        3. 验证激活码
+        4. 在 ai_device 表中创建设备记录并绑定到智能体
+        
+        注意：此方法需要 Redis 连接和 manager-api 的激活码机制支持
+        """
+        # 导入必要的模块（在方法顶部导入，避免except块引用问题）
+        import redis
+        
+        redis_client = None
+        conn = None
+        cursor = None
+        
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
+            # 初始化 Redis 连接（使用与 manager-api 相同的配置）
+            redis_password = self.db_config.get('redis_password', '')
+            redis_client = redis.Redis(
+                host=self.db_config.get('redis_host', '127.0.0.1'),
+                port=self.db_config.get('redis_port', 6379),
+                db=self.db_config.get('redis_db', 0),
+                password=redis_password if redis_password else None,
+                decode_responses=True
+            )
             
-            # 更新设备绑定
-            cursor.execute("""
-                UPDATE ec_health_devices 
-                SET ai_agent_id = %s, updated_at = NOW()
-                WHERE device_name LIKE %s AND user_id = %s
-            """, (agent_id, f"%{device_code}%", user_id))
+            # 测试Redis连接
+            redis_client.ping()
+            logger.info(f"Redis连接成功: {self.db_config.get('redis_host')}:{self.db_config.get('redis_port')}")
+            
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 1. 从 Redis 获取MAC地址（通过验证码）
+            # 注意：manager-api使用的key格式是 ota:activation:code:{code}
+            device_key = f"ota:activation:code:{device_code}"
+            mac_address = redis_client.get(device_key)
+            
+            if not mac_address:
+                logger.error(f"验证码 {device_code} 未找到或已过期，Redis key: {device_key}")
+                # 列出所有相关的key用于调试
+                all_codes = redis_client.keys("ota:activation:code:*")
+                logger.error(f"当前Redis中所有验证码key: {all_codes[:10] if all_codes else '无'}")
+                return {"success": False, "message": "验证码错误或已过期，请在设备控制台重新获取验证码"}
+            
+            logger.info(f"从Redis获取到MAC地址: {mac_address}")
+            
+            # 2. 处理MAC地址（移除JSON引号）
+            if mac_address.startswith('"') and mac_address.endswith('"'):
+                mac_address = mac_address[1:-1]
+            
+            # 生成设备ID（格式：MAC地址转小写并替换冒号为下划线）
+            device_id = mac_address.replace(":", "_").lower()
+            logger.info(f"生成设备ID: {device_id}")
+            
+            # 3. 获取设备详细信息（从Redis缓存）
+            # manager-api的格式：ota:activation:data:{safe_device_id}
+            cache_device_key = f"ota:activation:data:{device_id}"
+            device_data_str = redis_client.get(cache_device_key)
+            
+            if not device_data_str:
+                logger.error(f"设备数据未找到: {device_id}, Redis key: {cache_device_key}")
+                return {"success": False, "message": "设备数据未找到，请确保设备已上线并生成了验证码"}
+            
+            # 解析JSON数据
+            device_data = json.loads(device_data_str)
+            logger.info(f"从Redis获取到设备数据: {device_data}")
+            
+            # 4. 验证激活码
+            cached_code = device_data.get('activation_code')
+            if cached_code and cached_code != device_code:
+                logger.error(f"激活码不匹配: {cached_code} != {device_code}")
+                return {"success": False, "message": "验证码错误"}
+            
+            # 5. 检查设备是否已激活
+            cursor.execute("SELECT id FROM ai_device WHERE id = %s", (device_id,))
+            existing_device = cursor.fetchone()
+            
+            if existing_device:
+                logger.error(f"设备已被激活: {device_id}")
+                return {"success": False, "message": "设备已被激活，请不要重复绑定"}
+            
+            # 6. 获取智能体的 user_id
+            cursor.execute("SELECT user_id FROM ai_agent WHERE id = %s", (agent_id,))
+            agent_result = cursor.fetchone()
+            
+            if not agent_result:
+                logger.error(f"智能体不存在: {agent_id}")
+                return {"success": False, "message": "智能体不存在"}
+            
+            agent_user_id = agent_result['user_id']
+            
+            # 7. 创建设备记录并绑定到智能体
+            # 从device_data获取board和app_version，如果没有则使用默认值
+            board = device_data.get('board', 'ESP32')
+            app_version = device_data.get('app_version', '1.0.0')
+            
+            insert_sql = """
+            INSERT INTO ai_device (
+                id, user_id, agent_id, mac_address, board, app_version,
+                auto_update, last_connected_at, creator, create_date, updater, update_date
+            ) VALUES (%s, %s, %s, %s, %s, %s, 1, NOW(), %s, NOW(), %s, NOW())
+            """
+            
+            cursor.execute(insert_sql, (
+                device_id,
+                agent_user_id,
+                agent_id,
+                mac_address,
+                board,
+                app_version,
+                user_id,
+                user_id
+            ))
             
             conn.commit()
-            cursor.close()
-            conn.close()
             
-            if cursor.rowcount > 0:
-                return {"success": True, "message": "设备绑定成功"}
-            else:
-                return {"success": False, "message": "设备绑定失败，未找到匹配的设备"}
+            # 8. 清理 Redis 缓存
+            redis_client.delete(device_key)
+            redis_client.delete(cache_device_key)
+            
+            # 9. 清除智能体设备数量缓存（与manager-api保持一致）
+            agent_device_count_key = f"agent:device:count:{agent_id}"
+            redis_client.delete(agent_device_count_key)
+            
+            logger.info(f"设备绑定成功: device_id={device_id}, agent_id={agent_id}")
+            return {
+                "success": True, 
+                "message": "设备绑定成功",
+                "device_id": device_id,
+                "agent_id": agent_id
+            }
                 
+        except redis.ConnectionError as e:
+            logger.error(f"Redis 连接失败: {e}")
+            return {"success": False, "message": "Redis服务连接失败，请检查Redis是否正常运行"}
+        except redis.ResponseError as e:
+            logger.error(f"Redis 响应错误: {e}")
+            return {"success": False, "message": "Redis服务响应错误"}
         except Exception as e:
             logger.error(f"绑定设备失败: {e}")
-            return {"success": False, "message": str(e)}
+            import traceback
+            logger.error(f"错误详情: {traceback.format_exc()}")
+            return {"success": False, "message": f"绑定失败: {str(e)}"}
+        finally:
+            # 确保资源被正确释放
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+            if redis_client:
+                redis_client.close()
     
     async def get_chat_sessions(self, agent_id: str, page: int = 1, limit: int = 10) -> Dict[str, Any]:
         """获取聊天会话列表（路由接口）"""
@@ -3295,37 +3425,83 @@ class ElderCareAPI:
                 
             else:
                 # 注册为健康监测设备
-                # 获取用户的第一个AI智能体ID作为关联
-                cursor.execute("SELECT id FROM ai_agent WHERE user_id = %s LIMIT 1", [user_id])
-                agent_result = cursor.fetchone()
-                ai_agent_id = agent_result['id'] if agent_result else f"EC_default_{user_id}"
+                # 从前端获取选择的AI设备ID
+                ai_device_id = device_data.get('aiDeviceId') or device_data.get('ai_device_id')
                 
+                if not ai_device_id:
+                    cursor.close()
+                    conn.close()
+                    return {"success": False, "message": "必须选择关联的AI陪伴设备"}
+                
+                # 获取该AI设备关联的智能体ID
+                cursor.execute("SELECT agent_id, user_id FROM ai_device WHERE id = %s", [ai_device_id])
+                ai_device_result = cursor.fetchone()
+                
+                if not ai_device_result:
+                    cursor.close()
+                    conn.close()
+                    return {"success": False, "message": "选择的AI设备不存在"}
+                
+                ai_agent_id = ai_device_result['agent_id'] if ai_device_result['agent_id'] else f"EC_default_{user_id}"
+                
+                # 检查用户是否拥有该AI设备（安全性检查）
+                if ai_device_result['user_id'] != user_id:
+                    cursor.close()
+                    conn.close()
+                    return {"success": False, "message": "无权访问该AI设备"}
+                
+                # 插入健康设备记录，包含ai_device_id
                 sql = """
                 INSERT INTO ec_health_devices (
-                    user_id, ai_agent_id, plugin_id, device_name, device_type, 
+                    user_id, ai_agent_id, ai_device_id, plugin_id, device_name, device_type, 
                     device_brand, device_model, connection_status, 
                     health_features, mac_address, creator
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'disconnected', %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 
                 health_features = json.dumps({
                     "heart_rate": True,
                     "blood_pressure": True,
                     "blood_oxygen": True,
-                    "temperature": True
+                    "temperature": True,
+                    "steps": True,
+                    "sleep": True
                 }, ensure_ascii=False)
                 
                 # 生成插件ID
                 plugin_id = f"HEALTH_{device_data.get('deviceType', 'MONITOR')}_{str(uuid.uuid4()).replace('-', '')[:8]}"
                 
+                # 获取设备名称和类型
+                device_name = device_data.get('deviceName', '').strip()
+                if not device_name:
+                    device_name = '健康监测设备'
+                
+                # 设置设备类型（根据前端传递的deviceType或使用默认值）
+                device_type_mapping = {
+                    'health': 'smart_watch',
+                    'health_monitor': 'smart_watch',
+                    'watch': 'smart_watch',
+                    'blood_pressure': 'blood_pressure_monitor',
+                    'glucose': 'glucose_meter',
+                    'fitness': 'fitness_tracker'
+                }
+                
+                raw_device_type = device_data.get('deviceType', 'health')
+                device_type = device_type_mapping.get(raw_device_type, 'health')
+                
+                # 设置连接状态为connected（因为是用户主动添加的）
+                connection_status = 'connected'
+                
                 cursor.execute(sql, (
                     user_id,
                     ai_agent_id,
+                    ai_device_id,  # 正确绑定AI设备ID
                     plugin_id,
-                    device_data.get('deviceName', '健康设备'),
-                    device_data.get('deviceType', 'health_monitor'),
-                    device_data.get('model', '未知品牌'),
-                    device_data.get('model', '未知型号'),
+                    device_name,
+                    device_type,
+                    device_data.get('deviceBrand', '未知品牌'),
+                    device_data.get('deviceModel', '未知型号'),
+                    connection_status,
                     health_features,
                     f"MAC_{str(uuid.uuid4()).replace('-', '')[:12]}",  # 生成模拟MAC地址
                     user_id

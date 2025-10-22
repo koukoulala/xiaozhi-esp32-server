@@ -60,7 +60,12 @@ async def main():
         'port': manager_api_config.get('datasource', {}).get('port', 3306),
         'user': manager_api_config.get('datasource', {}).get('username', 'root'),
         'password': manager_api_config.get('datasource', {}).get('password', '123456'),
-        'database': manager_api_config.get('datasource', {}).get('database', 'xiaozhi_esp32_server')
+        'database': manager_api_config.get('datasource', {}).get('database', 'xiaozhi_esp32_server'),
+        # 添加Redis配置，用于设备绑定验证码机制
+        'redis_host': manager_api_config.get('redis', {}).get('host', '127.0.0.1'),
+        'redis_port': manager_api_config.get('redis', {}).get('port', 6379),
+        'redis_db': manager_api_config.get('redis', {}).get('database', 0),
+        'redis_password': manager_api_config.get('redis', {}).get('password', '')
     }
     try:
         init_eldercare_api(db_config)

@@ -86,6 +86,9 @@ class ConnectionHandler:
         self.client_abort = False
         self.client_is_speaking = False
         self.client_listen_mode = "auto"
+        
+        # MQTT网关相关标志
+        # self.conn_from_mqtt_gateway = False  # 默认不通过MQTT网关连接
 
         # 线程任务相关
         self.loop = asyncio.get_event_loop()

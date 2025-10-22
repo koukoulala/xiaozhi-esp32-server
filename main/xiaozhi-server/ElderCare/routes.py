@@ -199,6 +199,25 @@ async def bind_device_handler(request: Request) -> Response:
     except Exception as e:
         return web.json_response({'success': False, 'message': str(e)})
 
+async def bind_device_with_code_handler(request: Request) -> Response:
+    """使用6位验证码绑定设备到智能体（匹配前端 bindDeviceWithCode 调用）"""
+    try:
+        agent_id = request.match_info['agent_id']
+        device_code = request.match_info['device_code']
+        
+        eldercare_api = get_eldercare_api()
+        if not eldercare_api:
+            return web.json_response({'success': False, 'message': 'ElderCare API未初始化'})
+        
+        # 从请求头或查询参数获取 user_id（可选，主要用于权限验证）
+        user_id = int(request.query.get('user_id', 0))
+        
+        result = await eldercare_api.bind_device(agent_id, device_code, user_id)
+        return web.json_response(result)
+    except Exception as e:
+        logger.bind(tag=TAG).error(f"设备绑定错误: {e}")
+        return web.json_response({'success': False, 'message': str(e)})
+
 async def get_chat_sessions_handler(request: Request) -> Response:
     """获取聊天会话列表"""
     try:
@@ -826,12 +845,16 @@ def setup_eldercare_routes(app: web.Application):
     # 设备操作
     app.router.add_post('/eldercare/device/register', register_device_handler)
     app.router.add_post('/eldercare/device/add', add_device_handler)  # 匹配addDevice
+    app.router.add_post('/eldercare/device/bind/{agent_id}/{device_code}', bind_device_with_code_handler)  # 匹配 bindDeviceWithCode
     app.router.add_delete('/eldercare/device/delete/{device_id}', delete_device_handler)  # 匹配deleteDevice
     app.router.add_post('/eldercare/device/update/{device_id}', update_device_handler)  # 匹配updateDevice
     app.router.add_get('/eldercare/device/details/{device_id}', get_device_details_handler)  # 匹配getDeviceDetails
     app.router.add_post('/eldercare/device/config/{device_id}', update_device_config_handler)  # 匹配updateDeviceConfig
     app.router.add_get('/eldercare/device/status', get_device_status_handler)
     app.router.add_get('/eldercare/device/list', get_user_devices_handler)  # 别名
+    
+    # OPTIONS 支持
+    app.router.add_options('/eldercare/device/bind/{agent_id}/{device_code}', bind_device_with_code_handler)
     
     # =========================== 健康数据API ===========================
     app.router.add_get('/eldercare/health/data', get_health_data_handler)  # 匹配getHealthData

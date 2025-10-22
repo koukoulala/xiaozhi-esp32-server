@@ -51,9 +51,29 @@ const UserLogin = ({ onLoginSuccess, onShowRegister }) => {
       
       if (result.success && result.user) {
         setSuccess('登录成功！正在跳转...')
-        setTimeout(() => {
-          onLoginSuccess && onLoginSuccess(result.user)
-        }, 1000)
+        
+        // 检查是否有AI设备绑定
+        const checkDeviceBinding = async () => {
+          try {
+            const devicesResponse = await ElderCareAPI.getUserAIDevices(result.user.id)
+            const hasDevices = devicesResponse.success && 
+                              Array.isArray(devicesResponse.data) && 
+                              devicesResponse.data.length > 0
+            
+            // 将设备检查结果传递给父组件
+            setTimeout(() => {
+              onLoginSuccess && onLoginSuccess(result.user, !hasDevices)
+            }, 1000)
+          } catch (err) {
+            console.error('检查设备绑定失败:', err)
+            // 即使检查失败也允许登录
+            setTimeout(() => {
+              onLoginSuccess && onLoginSuccess(result.user, false)
+            }, 1000)
+          }
+        }
+        
+        checkDeviceBinding()
       } else {
         setError(result.message || '登录失败，请检查用户名和密码')
       }

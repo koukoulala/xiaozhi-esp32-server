@@ -893,9 +893,18 @@ class ElderCareAPI {
   }
 
   async addDevice(deviceData) {
-    return this.request('/eldercare/device/add', {
+    return this.request('/device/add', {
       method: 'POST',
       body: JSON.stringify(deviceData)
+    });
+  }
+
+  /**
+   * 使用6位验证码绑定设备
+   */
+  async bindDeviceWithCode(agentId, deviceCode) {
+    return this.request(`/device/bind/${agentId}/${deviceCode}`, {
+      method: 'POST'
     });
   }
 

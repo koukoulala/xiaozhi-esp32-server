@@ -35,7 +35,6 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
-  const [skipDeviceBinding, setSkipDeviceBinding] = useState(false)
   
   // 表单数据
   const [formData, setFormData] = useState({
@@ -72,20 +71,7 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
     wakeUpTime: '',
     sleepTime: '',
     mealTimes: '',
-    exerciseHabits: '',
-    
-    // 设备信息（第五步）
-    deviceId: '',
-    deviceName: '',
-    installLocation: ''
-  })
-  
-  // 设备发现状态
-  const [deviceDiscovery, setDeviceDiscovery] = useState({
-    scanning: false,
-    discoveredDevices: [],
-    selectedDevice: null,
-    connectionStatus: 'disconnected'
+    exerciseHabits: ''
   })
 
   const updateFormData = (field, value) => {
@@ -132,20 +118,18 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
       case 4:
         // 健康档案为可选项，可以直接通过
         break
-      case 5:
-        // 设备绑定步骤验证
-        if (!skipDeviceBinding && (!formData.deviceId || !deviceDiscovery.selectedDevice)) {
-          setError('请选择并连接设备，或选择稍后绑定')
-          return false
-        }
-        break
     }
     return true
   }
 
   const nextStep = () => {
     if (validateStep(currentStep)) {
-      setCurrentStep(prev => prev + 1)
+      // 第4步之后直接提交注册
+      if (currentStep === 4) {
+        submitRegistration();
+      } else {
+        setCurrentStep(prev => prev + 1);
+      }
     }
   }
 
@@ -154,77 +138,10 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
     setError(null)
   }
 
-  // 设备发现功能
-  const scanDevices = async () => {
-    setDeviceDiscovery(prev => ({ ...prev, scanning: true }))
-    setError(null)
-    
-    try {
-      // 模拟设备扫描过程
-      await new Promise(resolve => setTimeout(resolve, 3000))
-      
-      // 模拟发现的设备
-      const mockDevices = [
-        {
-          id: 'esp32_001',
-          name: '小智陪伴设备-001',
-          type: 'ElderCare Device',
-          signal: -45,
-          status: 'available'
-        },
-        {
-          id: 'esp32_002', 
-          name: '小智陪伴设备-002',
-          type: 'ElderCare Device',
-          signal: -67,
-          status: 'available'
-        }
-      ]
-      
-      setDeviceDiscovery(prev => ({
-        ...prev,
-        discoveredDevices: mockDevices,
-        scanning: false
-      }))
-      
-    } catch (err) {
-      setError('设备扫描失败，请重试')
-      setDeviceDiscovery(prev => ({ ...prev, scanning: false }))
-    }
-  }
 
-  const selectDevice = (device) => {
-    setDeviceDiscovery(prev => ({ 
-      ...prev, 
-      selectedDevice: device 
-    }))
-    updateFormData('deviceId', device.id)
-    updateFormData('deviceName', device.name)
-  }
-
-  const connectDevice = async () => {
-    if (!deviceDiscovery.selectedDevice) return
-    
-    setLoading(true)
-    setDeviceDiscovery(prev => ({ ...prev, connectionStatus: 'connecting' }))
-    
-    try {
-      // 模拟设备连接过程
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      
-      setDeviceDiscovery(prev => ({ ...prev, connectionStatus: 'connected' }))
-      setSuccess('设备连接成功！')
-      
-    } catch (err) {
-      setError('设备连接失败，请重试')
-      setDeviceDiscovery(prev => ({ ...prev, connectionStatus: 'failed' }))
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const submitRegistration = async () => {
-    if (!validateStep(5)) return
+    if (!validateStep(4)) return
     
     setLoading(true)
     setError(null)
@@ -265,11 +182,7 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
           mealTimes: formData.mealTimes,
           exerciseHabits: formData.exerciseHabits
         },
-        deviceInfo: skipDeviceBinding ? null : {
-          deviceId: formData.deviceId,
-          deviceName: formData.deviceName,
-          installLocation: formData.installLocation
-        }
+        create_default_agent: true // 标记需要创建默认智能体
       }
       
       console.log('提交注册数据:', registrationData);
@@ -279,7 +192,7 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
       console.log('注册结果:', result);
       
       if (result.success) {
-        setSuccess('注册成功！正在跳转到系统...')
+        setSuccess('注册成功！系统已为您创建默认智能体，正在跳转...')
         setTimeout(() => {
           onRegistrationComplete && onRegistrationComplete(result.user_id, registrationData)
         }, 2000)
@@ -300,8 +213,7 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
       1: '账号设置',
       2: '老人基本信息',
       3: '家属联系信息', 
-      4: '健康档案配置',
-      5: '设备绑定配置'
+      4: '健康档案配置'
     }
     return titles[step]
   }
@@ -311,16 +223,15 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-2xl font-bold">用户注册</h2>
         <Badge variant="outline">
-          步骤 {currentStep}/5
+          步骤 {currentStep}/4
         </Badge>
       </div>
-      <Progress value={(currentStep / 5) * 100} className="mb-4" />
+      <Progress value={(currentStep / 4) * 100} className="mb-4" />
       <div className="flex justify-between text-sm text-muted-foreground">
         <span className={currentStep >= 1 ? 'text-primary font-medium' : ''}>账号设置</span>
         <span className={currentStep >= 2 ? 'text-primary font-medium' : ''}>老人信息</span>
         <span className={currentStep >= 3 ? 'text-primary font-medium' : ''}>家属信息</span>
         <span className={currentStep >= 4 ? 'text-primary font-medium' : ''}>健康档案</span>
-        <span className={currentStep >= 5 ? 'text-primary font-medium' : ''}>设备绑定</span>
       </div>
     </div>
   )
@@ -662,174 +573,7 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
     </Card>
   )
 
-  // 第五步 - 设备发现与绑定
-  const renderStep5 = () => (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <Settings className="h-5 w-5 mr-2" />
-            设备发现与绑定
-          </CardTitle>
-          <CardDescription>
-            您可以现在绑定设备，也可以登录后再绑定
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between p-3 border rounded-lg">
-            <div className="flex items-center space-x-3">
-              <input
-                type="checkbox"
-                id="skipBinding"
-                checked={skipDeviceBinding}
-                onChange={(e) => setSkipDeviceBinding(e.target.checked)}
-                className="w-4 h-4"
-              />
-              <div>
-                <Label htmlFor="skipBinding" className="font-medium cursor-pointer">
-                  稍后绑定设备
-                </Label>
-                <p className="text-sm text-muted-foreground">
-                  跳过此步骤，登录后可在设备管理中绑定
-                </p>
-              </div>
-            </div>
-          </div>
 
-          {!skipDeviceBinding && (
-            <>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">扫描附近设备</p>
-                  <p className="text-sm text-muted-foreground">请确保设备已开机并处于配网模式</p>
-                </div>
-                <Button 
-                  onClick={scanDevices} 
-                  disabled={deviceDiscovery.scanning}
-                  variant="outline"
-                >
-                  {deviceDiscovery.scanning ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      扫描中...
-                    </>
-                  ) : (
-                    <>
-                      <Wifi className="h-4 w-4 mr-2" />
-                      扫描设备
-                    </>
-                  )}
-                </Button>
-              </div>
-
-              {deviceDiscovery.discoveredDevices.length > 0 && (
-                <div className="space-y-3">
-                  <Label>发现的设备</Label>
-                  {deviceDiscovery.discoveredDevices.map((device) => (
-                    <div
-                      key={device.id}
-                      className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                        deviceDiscovery.selectedDevice?.id === device.id
-                          ? 'border-primary bg-primary/5'
-                          : 'hover:bg-muted/50'
-                      }`}
-                      onClick={() => selectDevice(device)}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3">
-                          <Smartphone className="h-5 w-5 text-muted-foreground" />
-                          <div>
-                            <p className="font-medium">{device.name}</p>
-                            <p className="text-sm text-muted-foreground">
-                              设备ID: {device.id} • 信号: {device.signal}dBm
-                            </p>
-                          </div>
-                        </div>
-                        {deviceDiscovery.selectedDevice?.id === device.id && (
-                          <CheckCircle className="h-5 w-5 text-primary" />
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {!skipDeviceBinding && deviceDiscovery.selectedDevice && (
-        <Card>
-          <CardHeader>
-            <CardTitle>设备配置</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="deviceName">设备名称</Label>
-                <Input
-                  id="deviceName"
-                  value={formData.deviceName}
-                  onChange={(e) => updateFormData('deviceName', e.target.value)}
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="installLocation">安装位置</Label>
-                <Select value={formData.installLocation} onValueChange={(value) => updateFormData('installLocation', value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="选择安装位置" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="living_room">客厅</SelectItem>
-                    <SelectItem value="bedroom">卧室</SelectItem>
-                    <SelectItem value="kitchen">厨房</SelectItem>
-                    <SelectItem value="bathroom">卫生间</SelectItem>
-                    <SelectItem value="study">书房</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            
-            <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <div className={`w-3 h-3 rounded-full ${
-                  deviceDiscovery.connectionStatus === 'connected' ? 'bg-green-500' :
-                  deviceDiscovery.connectionStatus === 'connecting' ? 'bg-yellow-500 animate-pulse' :
-                  deviceDiscovery.connectionStatus === 'failed' ? 'bg-red-500' : 'bg-gray-400'
-                }`} />
-                <div>
-                  <p className="font-medium">设备连接状态</p>
-                  <p className="text-sm text-muted-foreground">
-                    {deviceDiscovery.connectionStatus === 'connected' ? '已连接' :
-                     deviceDiscovery.connectionStatus === 'connecting' ? '连接中...' :
-                     deviceDiscovery.connectionStatus === 'failed' ? '连接失败' : '未连接'}
-                  </p>
-                </div>
-              </div>
-              
-              {deviceDiscovery.connectionStatus !== 'connected' && (
-                <Button 
-                  onClick={connectDevice}
-                  disabled={loading || deviceDiscovery.connectionStatus === 'connecting'}
-                  size="sm"
-                >
-                  {deviceDiscovery.connectionStatus === 'connecting' ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
-                      连接中
-                    </>
-                  ) : (
-                    '连接设备'
-                  )}
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  )
 
   return (
     <div className="min-h-screen bg-background p-6">
@@ -870,7 +614,6 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
           {currentStep === 2 && renderStep2()}
           {currentStep === 3 && renderStep3()}
           {currentStep === 4 && renderStep4()}
-          {currentStep === 5 && renderStep5()}
         </div>
         
         <div className="flex justify-between">
@@ -883,7 +626,7 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
             上一步
           </Button>
           
-          {currentStep < 5 ? (
+          {currentStep < 4 ? (
             <Button onClick={nextStep}>
               下一步
               <ArrowRight className="h-4 w-4 ml-2" />
@@ -891,7 +634,7 @@ const UserRegistration = ({ onRegistrationComplete, onSwitchToLogin }) => {
           ) : (
             <Button 
               onClick={submitRegistration}
-              disabled={loading || (!skipDeviceBinding && deviceDiscovery.connectionStatus !== 'connected')}
+              disabled={loading}
             >
               {loading ? (
                 <>

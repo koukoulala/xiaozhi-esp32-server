@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
-import { Shield, Home, Activity, Calendar, Smartphone, Bot, Mic, Settings, UserCheck } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card.jsx'
+import { Shield, Home, Activity, Calendar, Smartphone, Bot, Mic, Settings, UserCheck, AlertCircle } from 'lucide-react'
 import ElderCareAPI from './services/api.js'
 import UserRegistration from './components/UserRegistration.jsx'
 import UserLogin from './components/UserLogin.jsx'
@@ -121,6 +122,7 @@ function AppContent() {
   const [systemStatus, setSystemStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [initialLoad, setInitialLoad] = useState(true) // 新增：跟踪初始加载
+  const [showDeviceBindingPrompt, setShowDeviceBindingPrompt] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -177,8 +179,8 @@ function AppContent() {
     setInitialLoad(false) // 标记初始加载完成
   }, [initialLoad, navigate, location.pathname]) // 添加必要依赖
 
-  const handleLoginSuccess = (userData) => {
-    console.log('登录成功，用户数据:', userData)
+  const handleLoginSuccess = (userData, needsDeviceBinding = false) => {
+    console.log('登录成功，用户数据:', userData, '需要设备绑定:', needsDeviceBinding)
     
     // 确保用户数据格式正确
     const normalizedUser = {
@@ -204,9 +206,26 @@ function AppContent() {
     console.log('执行登录成功后的导航到dashboard')
     // 直接导航，不再依赖useEffect
     navigate('/dashboard')
+    
+    // 如果需要设备绑定，显示提示框
+    if (needsDeviceBinding) {
+      setTimeout(() => {
+        setShowDeviceBindingPrompt(true)
+      }, 1500) // 延迟1.5秒显示提示，给用户时间看到界面
+    }
   }
 
-  const handleRegistrationComplete = (userId, userData) => {
+  const handleDeviceBindingPromptClose = () => {
+    setShowDeviceBindingPrompt(false)
+  }
+
+  const handleGoToDeviceManagement = () => {
+    setShowDeviceBindingPrompt(false)
+    // 通过state传递参数，让DeviceManagement组件自动打开添加AI设备流程
+    navigate('/devices', { state: { autoAddDevice: true, deviceType: 'ai' } })
+  }
+
+  const handleRegistrationComplete = async (userId, userData) => {
     console.log('注册完成，用户ID:', userId, '用户数据:', userData)
     
     // 构建用户对象
@@ -230,6 +249,29 @@ function AppContent() {
     setTimeout(() => {
       navigate('/dashboard')
     }, 100)
+    
+    // 检查是否有AI设备绑定（注册后应该没有设备，需要提示用户绑定）
+    try {
+      const devicesResponse = await ElderCareAPI.getUserAIDevices(userId)
+      const hasDevices = devicesResponse.success && 
+                        Array.isArray(devicesResponse.data) && 
+                        devicesResponse.data.length > 0
+      
+      console.log('注册后设备检查:', { hasDevices, devicesResponse })
+      
+      // 如果没有设备，显示绑定提示（延迟2.5秒，让用户先看到dashboard）
+      if (!hasDevices) {
+        setTimeout(() => {
+          setShowDeviceBindingPrompt(true)
+        }, 2500)
+      }
+    } catch (err) {
+      console.error('注册后检查设备绑定失败:', err)
+      // 即使检查失败，也默认显示提示（新注册用户通常没有设备）
+      setTimeout(() => {
+        setShowDeviceBindingPrompt(true)
+      }, 2500)
+    }
   }
 
   const handleLogout = () => {
@@ -355,6 +397,45 @@ function AppContent() {
           </Routes>
         </div>
       </div>
+
+      {/* 设备绑定提示弹窗 - 顶部居中小提示框 */}
+      {showDeviceBindingPrompt && (
+        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 animate-in slide-in-from-top duration-300">
+          <Card className="w-[400px] shadow-lg border-yellow-200 bg-yellow-50">
+            <CardContent className="pt-6">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <h3 className="font-semibold text-sm text-gray-900 mb-1">
+                    需要绑定AI智能陪伴设备
+                  </h3>
+                  <p className="text-xs text-gray-600 mb-3">
+                    为了使用完整的智能陪伴功能，请绑定您的AI设备
+                  </p>
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={handleDeviceBindingPromptClose}
+                      className="text-xs h-8"
+                    >
+                      稍后绑定
+                    </Button>
+                    <Button 
+                      size="sm"
+                      onClick={handleGoToDeviceManagement}
+                      className="text-xs h-8"
+                    >
+                      <Smartphone className="h-3 w-3 mr-1" />
+                      立即绑定
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }

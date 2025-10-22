@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx';
 import { Button } from '@/components/ui/button.jsx';
 import { Badge } from '@/components/ui/badge.jsx';
@@ -14,15 +14,14 @@ import {
   Trash2,
   RefreshCw,
   AlertTriangle,
-  Settings,
   Wifi,
-  WifiOff,
-  CheckCircle
+  WifiOff
 } from 'lucide-react';
 import ElderCareAPI from '../services/api.js';
 
 function DeviceManagement() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -30,6 +29,10 @@ function DeviceManagement() {
   const [userId, setUserId] = useState(null);
   const [showAddDevice, setShowAddDevice] = useState(false);
   const [addingDevice, setAddingDevice] = useState(false);
+  const [deviceType, setDeviceType] = useState('health'); // 'ai' or 'health'
+  const [verificationCode, setVerificationCode] = useState('');
+  const [selectedAgentId, setSelectedAgentId] = useState('');
+  const [userAgents, setUserAgents] = useState([]);
   const [newDevice, setNewDevice] = useState({
     deviceName: '',
     deviceType: 'health',
@@ -40,8 +43,61 @@ function DeviceManagement() {
 
   useEffect(() => {
     loadDevices();
+    loadUserAgents();
     // 移除自动刷新，改为手动刷新
   }, []);
+
+  // 处理自动打开添加设备流程
+  useEffect(() => {
+    if (location.state?.autoAddDevice && location.state?.deviceType) {
+      // 延迟一点，等待数据加载完成
+      const timer = setTimeout(() => {
+        handleShowAddDevice(location.state.deviceType);
+        // 清除state，避免重复触发
+        navigate(location.pathname, { replace: true, state: {} });
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [location.state]);
+
+  const loadUserAgents = async () => {
+    try {
+      const currentUser = ElderCareAPI.getCurrentUser();
+      if (!currentUser) {
+        return;
+      }
+      
+      const response = await ElderCareAPI.getUserAgents(currentUser.id);
+      if (response.success && Array.isArray(response.data)) {
+        setUserAgents(response.data);
+        // 设置默认agent
+        const defaultAgent = response.data.find(agent => agent.default_agent || agent.is_default);
+        if (defaultAgent) {
+          setSelectedAgentId(defaultAgent.id);
+        } else if (response.data.length > 0) {
+          setSelectedAgentId(response.data[0].id);
+        }
+      }
+    } catch (err) {
+      console.error('加载智能体列表失败:', err);
+    }
+  };
+
+  const handleShowAddDevice = (type) => {
+    setDeviceType(type);
+    setVerificationCode('');
+    setShowAddDevice(true);
+    if (type === 'health') {
+      // 健康设备保持原有逻辑
+      setNewDevice({
+        deviceName: '',
+        deviceType: 'health',
+        aiDeviceId: '',
+        location: '',
+        description: ''
+      });
+    }
+  };
 
   const loadDevices = async () => {
     try {
@@ -90,53 +146,83 @@ function DeviceManagement() {
   };
 
   const handleAddDevice = async () => {
-    if (!newDevice.deviceName.trim()) {
-      setError('请填写设备名称');
-      return;
-    }
-
-    if (newDevice.deviceType === 'health' && !newDevice.aiDeviceId) {
-      setError('添加健康设备时必须选择关联的AI设备');
-      return;
-    }
-
-    try {
-      setAddingDevice(true);
-      setError(null);
-      
-      const deviceData = {
-        userId: userId,
-        deviceName: newDevice.deviceName.trim(),
-        deviceType: newDevice.deviceType,
-        location: newDevice.location.trim(),
-        description: newDevice.description.trim()
-      };
-
-      // 如果是健康设备，添加AI设备关联
-      if (newDevice.deviceType === 'health') {
-        deviceData.aiDeviceId = newDevice.aiDeviceId;
+    if (deviceType === 'ai') {
+      // AI智能陪伴设备 - 使用6位验证码绑定
+      if (!/^\d{6}$/.test(verificationCode)) {
+        setError('请输入正确的6位数字验证码');
+        return;
       }
 
-      const response = await ElderCareAPI.addDevice(deviceData);
-      
-      if (response.success) {
-        setSuccess('设备添加成功');
-        setShowAddDevice(false);
-        setNewDevice({
-          deviceName: '',
-          deviceType: 'health',
-          aiDeviceId: '',
-          location: '',
-          description: ''
-        });
-        loadDevices();
-      } else {
-        setError(response.message || '添加设备失败');
+      if (!selectedAgentId) {
+        setError('请选择要绑定的智能体');
+        return;
       }
-    } catch (err) {
-      setError('添加设备失败: ' + err.message);
-    } finally {
-      setAddingDevice(false);
+
+      try {
+        setAddingDevice(true);
+        setError(null);
+        
+        const response = await ElderCareAPI.bindDeviceWithCode(selectedAgentId, verificationCode);
+        
+        if (response.success || response.code === 0) {
+          setSuccess('智能陪伴设备绑定成功');
+          setShowAddDevice(false);
+          setVerificationCode('');
+          loadDevices();
+        } else {
+          setError(response.message || '设备绑定失败');
+        }
+      } catch (err) {
+        setError('设备绑定失败: ' + err.message);
+      } finally {
+        setAddingDevice(false);
+      }
+    } else {
+      // 健康监测设备 - 保持原有逻辑
+      if (!newDevice.deviceName.trim()) {
+        setError('请填写设备名称');
+        return;
+      }
+
+      if (!newDevice.aiDeviceId) {
+        setError('添加健康设备时必须选择关联的AI设备');
+        return;
+      }
+
+      try {
+        setAddingDevice(true);
+        setError(null);
+        
+        const deviceData = {
+          userId: userId,
+          deviceName: newDevice.deviceName.trim(),
+          deviceType: newDevice.deviceType,
+          aiDeviceId: newDevice.aiDeviceId,
+          location: newDevice.location.trim(),
+          description: newDevice.description.trim()
+        };
+
+        const response = await ElderCareAPI.addDevice(deviceData);
+        
+        if (response.success) {
+          setSuccess('健康监测设备添加成功');
+          setShowAddDevice(false);
+          setNewDevice({
+            deviceName: '',
+            deviceType: 'health',
+            aiDeviceId: '',
+            location: '',
+            description: ''
+          });
+          loadDevices();
+        } else {
+          setError(response.message || '添加设备失败');
+        }
+      } catch (err) {
+        setError('添加设备失败: ' + err.message);
+      } finally {
+        setAddingDevice(false);
+      }
     }
   };
 
@@ -190,10 +276,16 @@ function DeviceManagement() {
           <h2 className="text-2xl font-bold">设备管理</h2>
           <p className="text-muted-foreground">管理您的AI智能设备和健康监测设备</p>
         </div>
-        <Button onClick={() => setShowAddDevice(true)} className="flex items-center gap-2">
-          <Plus className="h-4 w-4" />
-          添加设备
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => handleShowAddDevice('ai')} className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            添加智能陪伴设备
+          </Button>
+          <Button onClick={() => handleShowAddDevice('health')} variant="outline" className="flex items-center gap-2">
+            <Plus className="h-4 w-4" />
+            添加健康监测设备
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -211,11 +303,82 @@ function DeviceManagement() {
       )}
 
       {/* 添加设备对话框 */}
-      {showAddDevice && (
+      {showAddDevice && deviceType === 'ai' && (
         <Card>
           <CardHeader>
-            <CardTitle>添加新设备</CardTitle>
-            <CardDescription>添加AI智能设备或健康监测设备</CardDescription>
+            <CardTitle>添加智能陪伴设备</CardTitle>
+            <CardDescription>请输入设备播报的6位数字验证码进行绑定</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="agentSelect">选择智能体 *</Label>
+                <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择要绑定的智能体" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userAgents.map((agent) => (
+                      <SelectItem key={agent.id} value={agent.id}>
+                        {agent.agent_name} {agent.default_agent && '(默认)'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="verificationCode">设备验证码 *</Label>
+                <Input
+                  id="verificationCode"
+                  value={verificationCode}
+                  onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="6位数字"
+                  maxLength={6}
+                  className="w-40 text-center text-lg tracking-widest font-mono"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  设备开机后会播报验证码
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button 
+                onClick={handleAddDevice} 
+                disabled={addingDevice || !/^\d{6}$/.test(verificationCode)}
+              >
+                {addingDevice ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    绑定中...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-2" />
+                    绑定设备
+                  </>
+                )}
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setShowAddDevice(false);
+                  setVerificationCode('');
+                }}
+              >
+                取消
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 添加健康设备对话框 */}
+      {showAddDevice && deviceType === 'health' && (
+        <Card>
+          <CardHeader>
+            <CardTitle>添加健康监测设备</CardTitle>
+            <CardDescription>添加健康监测设备并关联到AI智能陪伴设备</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -229,22 +392,6 @@ function DeviceManagement() {
                 />
               </div>
               <div>
-                <Label htmlFor="deviceType">设备类型 *</Label>
-                <Select value={newDevice.deviceType} onValueChange={(value) => setNewDevice(prev => ({...prev, deviceType: value, aiDeviceId: ''}))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ai">AI智能陪伴设备</SelectItem>
-                    <SelectItem value="health">健康监测设备</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* 健康设备需要选择关联的AI设备 */}
-            {newDevice.deviceType === 'health' && (
-              <div>
                 <Label htmlFor="aiDeviceId">关联AI设备 *</Label>
                 <Select value={newDevice.aiDeviceId} onValueChange={(value) => setNewDevice(prev => ({...prev, aiDeviceId: value}))}>
                   <SelectTrigger>
@@ -253,32 +400,11 @@ function DeviceManagement() {
                   <SelectContent>
                     {devices.map((device) => (
                       <SelectItem key={device.id} value={device.id}>
-                        {device.device_name || `AI设备 ${device.id}`}
+                        {device.alias || device.device_name || `设备 ${device.mac_address}`}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="location">安装位置</Label>
-                <Input
-                  id="location"
-                  value={newDevice.location}
-                  onChange={(e) => setNewDevice(prev => ({...prev, location: e.target.value}))}
-                  placeholder="如：客厅、卧室等"
-                />
-              </div>
-              <div>
-                <Label htmlFor="description">设备描述</Label>
-                <Input
-                  id="description"
-                  value={newDevice.description}
-                  onChange={(e) => setNewDevice(prev => ({...prev, description: e.target.value}))}
-                  placeholder="设备的简单描述"
-                />
               </div>
             </div>
 
@@ -371,16 +497,16 @@ function DeviceManagement() {
                         <p className="font-mono">{aiDevice.mac_address || '--'}</p>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">智能体:</span>
-                        <p>{aiDevice.agent_name || '--'}</p>
+                        <span className="text-muted-foreground">设备型号:</span>
+                        <p>{aiDevice.board || '--'}</p>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">位置:</span>
-                        <p>{aiDevice.location || '--'}</p>
+                        <span className="text-muted-foreground">固件版本:</span>
+                        <p>{aiDevice.app_version || '--'}</p>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">最后在线:</span>
-                        <p>{aiDevice.last_online ? new Date(aiDevice.last_online).toLocaleString() : '--'}</p>
+                        <span className="text-muted-foreground">最后连接:</span>
+                        <p>{aiDevice.last_connected_at ? new Date(aiDevice.last_connected_at).toLocaleString() : '--'}</p>
                       </div>
                     </div>
                   </CardContent>

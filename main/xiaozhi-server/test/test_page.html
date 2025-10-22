@@ -485,6 +485,24 @@
         // 初始化音频录制和处理
         async function initAudio() {
             try {
+                // 检查浏览器是否支持getUserMedia
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    const errorMsg = '您的浏览器不支持音频录制功能。请确保：\n' +
+                        '1. 使用现代浏览器（Chrome、Firefox、Edge等）\n' +
+                        '2. 通过 HTTP 服务器访问页面（不是 file:// 协议）\n' +
+                        '3. 如果是远程访问，需要使用 HTTPS';
+                    log(errorMsg, 'error');
+                    alert(errorMsg);
+                    return false;
+                }
+
+                // 检查是否在安全上下文中
+                if (window.location.protocol !== 'https:' && 
+                    window.location.hostname !== 'localhost' && 
+                    window.location.hostname !== '127.0.0.1') {
+                    log('警告：非HTTPS环境可能无法使用麦克风。建议使用 localhost 或 HTTPS', 'warning');
+                }
+
                 // 请求麦克风权限
                 const stream = await navigator.mediaDevices.getUserMedia({
                     audio: {
