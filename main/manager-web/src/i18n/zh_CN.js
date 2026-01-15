@@ -22,9 +22,10 @@ export default {
   'header.clearHistory': '清空历史',
   'header.providerManagement': '字段管理',
   'header.serverSideManagement': '服务端管理',
+  'header.featureManagement': '系统功能配置',
   'header.changePassword': '修改密码',
   'header.logout': '退出登录',
-  'header.searchPlaceholder': '输入名称搜索..',
+  'header.searchPlaceholder': '输入名称或mac搜索',
 
   // McpToolCallDialog组件文本
   'mcpToolCall.title': '工具调用',
@@ -228,6 +229,26 @@ export default {
   'voicePrintDialog.requiredDescription': '请输入描述',
   'voicePrintDialog.requiredName': '请输入姓名',
   'voicePrintDialog.requiredAudioVector': '请选择音频向量',
+
+  // 上下文源对话框相关
+  'contextProviderDialog.title': '编辑源',
+  'contextProviderDialog.noContextApi': '暂无上下文API',
+  'contextProviderDialog.add': '添加',
+  'contextProviderDialog.apiUrl': '接口地址',
+  'contextProviderDialog.apiUrlPlaceholder': 'http://api.example.com/data',
+  'contextProviderDialog.requestHeaders': '请求头',
+  'contextProviderDialog.headerKeyPlaceholder': 'Key',
+  'contextProviderDialog.headerValuePlaceholder': 'Value',
+  'contextProviderDialog.noHeaders': '暂无 Headers',
+  'contextProviderDialog.addHeader': '添加 Header',
+  'contextProviderDialog.cancel': '取消',
+  'contextProviderDialog.confirm': '确定',
+
+  // 角色配置页面-上下文源相关
+  'roleConfig.contextProvider': '上下文源',
+  'roleConfig.contextProviderSuccess': '已成功添加 {count} 个源。',
+  'roleConfig.contextProviderDocLink': '如何部署上下文源',
+  'roleConfig.editContextProvider': '编辑源',
 
   // 声纹页面相关
   'voicePrint.pageTitle': '声纹识别',
@@ -692,7 +713,7 @@ export default {
   'paramManagement.deleteFailed': '删除失败，请重试',
   'paramManagement.operationCancelled': '已取消删除操作',
   'paramManagement.operationClosed': '操作已关闭',
-  'paramManagement.updateSuccess': '修改成功',
+  'paramManagement.updateSuccess': '修改成功，部分配置需重启xiaozhi-server模块才生效',
   'paramManagement.addSuccess': '新增成功',
   'paramManagement.updateFailed': '更新失败',
   'paramManagement.addFailed': '新增失败',
@@ -758,6 +779,16 @@ export default {
   'roleConfig.fetchConfigFailed': '获取配置失败',
   'roleConfig.fetchModelsFailed': '获取模型列表失败',
   'roleConfig.fetchPluginsFailed': '获取插件列表失败',
+  'roleConfig.cannotResumeAudio': '无法恢复播放音频',
+  'roleConfig.selectVoiceFirst': '请先选择一个音色',
+  'roleConfig.audioLoadTimeout': '音频加载时间较长，请稍后重试',
+  'roleConfig.cloneAudioPlayFailed': '克隆音频播放失败',
+  'roleConfig.cannotPlayCloneAudio': '无法播放克隆音频',
+  'roleConfig.getCloneAudioFailed': '获取克隆音频失败',
+  'roleConfig.noPreviewAudio': '该音色暂无可预览的音频',
+  'roleConfig.audioPlayFailed': '音频播放失败',
+  'roleConfig.cannotPlayAudio': '无法播放音频',
+  'roleConfig.audioPlayError': '播放音频过程出错',
 
   // 功能管理对话框文本
   'functionDialog.title': '功能管理',
@@ -800,7 +831,7 @@ export default {
   'modelConfig.rag': '知识库',
   'modelConfig.modelId': '模型ID',
   'modelConfig.modelName': '模型名称',
-  'modelConfig.provider': '提供商',
+  'modelConfig.provider': '接口类型',
   'modelConfig.unknown': '未知',
   'modelConfig.isEnabled': '是否启用',
   'modelConfig.isDefault': '是否默认',
@@ -831,7 +862,7 @@ export default {
   'modelConfig.enableSuccess': '启用成功',
   'modelConfig.disableSuccess': '禁用成功',
   'modelConfig.operationFailed': '操作失败',
-  'modelConfig.setDefaultSuccess': '设置默认模型成功',
+  'modelConfig.setDefaultSuccess': '设置默认模型成功，请及时手动重启xiaozhi-server模块',
   'modelConfig.itemsPerPage': '{items}条/页',
   'modelConfig.firstPage': '首页',
   'modelConfig.prevPage': '上一页',
@@ -898,6 +929,10 @@ export default {
   'ttsModel.selectVoiceToDelete': '请选择要删除的音色',
   'ttsModel.warning': '警告',
   'ttsModel.confirmDeleteVoice': '确定要删除{count}个音色吗？',
+  'ttsModel.voiceCodeNameLanguageRequired': '音色编码、音色名称和语言类型不能为空',
+  'ttsModel.deleteCancelled': '删除已取消',
+  'ttsModel.updateSuccess': '更新成功',
+  'ttsModel.saveSuccess': '保存成功',
 
   // OTA管理页面文本
   'otaManagement.firmwareManagement': '固件管理',
@@ -1262,4 +1297,35 @@ export default {
   'knowledgeFileUpload.content': '内容:',
   'knowledgeFileUpload.testQuestionRequired': '请输入测试问题',
   'knowledgeBaseDialog.descriptionRequired': '请输入知识库描述',
+
+  // 系统功能配置页面文本
+  'featureManagement.selectAll': '全选',
+  'featureManagement.deselectAll': '取消全选',
+  'featureManagement.save': '保存配置',
+  'featureManagement.reset': '重置',
+  'featureManagement.group.featureManagement': '是否开启功能/板块',
+  'featureManagement.group.voiceManagement': '配置智能体时是否对用户可见',
+  'featureManagement.noFeatures': '暂无功能',
+  'featureManagement.contactAdmin': '请联系管理员配置功能',
+  'featureManagement.saveSuccess': '功能配置保存成功',
+  'featureManagement.resetConfirm': '确定要重置所有功能配置吗？',
+  'featureManagement.confirm': '确定',
+  'featureManagement.cancel': '取消',
+  'featureManagement.resetSuccess': '功能配置重置成功',
+  'featureManagement.noChanges': '没有需要保存的更改',
+
+  // 功能名称和描述
+  'feature.voiceprintRecognition.name': '声纹识别',
+  'feature.voiceprintRecognition.description': '通过声纹识别技术验证用户身份，提供安全的语音交互体验',
+  'feature.voiceClone.name': '音色克隆',
+  'feature.voiceClone.description': '使用AI技术克隆特定音色，实现个性化语音合成',
+  'feature.knowledgeBase.name': '知识库',
+  'feature.knowledgeBase.description': '构建和管理知识库系统，为AI助手提供专业知识支持',
+  'feature.mcpAccessPoint.name': 'MCP接入点',
+  'feature.mcpAccessPoint.description': '提供MCP协议接入点，支持外部工具和服务的集成',
+  'feature.vad.name': '语音活动检测',
+  'feature.vad.description': '自动检测语音活动，优化语音交互的响应效率',
+  'feature.asr.name': '语音识别',
+  'feature.asr.description': '将语音转换为文本，实现自然语言交互功能',
+
 }

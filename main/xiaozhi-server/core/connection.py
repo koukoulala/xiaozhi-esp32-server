@@ -69,9 +69,10 @@ class ConnectionHandler:
         self.server = server  # 保存server实例的引用
 
         self.need_bind = False  # 是否需要绑定设备
+        self.bind_completed_event = asyncio.Event()
         self.bind_code = None  # 绑定设备的验证码
         self.last_bind_prompt_time = 0  # 上次播放绑定提示的时间戳(秒)
-        self.bind_prompt_interval = 30  # 绑定提示播放间隔(秒)
+        self.bind_prompt_interval = 60  # 绑定提示播放间隔(秒)
 
         self.read_config_from_api = self.config.get("read_config_from_api", False)
 
@@ -94,7 +95,7 @@ class ConnectionHandler:
         # self.conn_from_mqtt_gateway = False  # 默认不通过MQTT网关连接
 
         # 线程任务相关
-        self.loop = asyncio.get_event_loop()
+        self.loop = None  # 在 handle_connection 中获取运行中的事件循环
         self.stop_event = threading.Event()
         self.executor = ThreadPoolExecutor(max_workers=5)
 
@@ -132,6 +133,8 @@ class ConnectionHandler:
         # 所以涉及到ASR的变量，需要在这里定义，属于connection的私有变量
         self.asr_audio = []
         self.asr_audio_queue = queue.Queue()
+        self.current_speaker = None  # 存储当前说话人
+        self.current_language_tag = None  # 存储当前ASR识别的语言标签
 
         # llm相关变量
         self.llm_finish_task = True
@@ -166,7 +169,7 @@ class ConnectionHandler:
         self.features = None
 
         # 初始化提示词管理器
-        self.prompt_manager = PromptManager(config, self.logger)
+        self.prompt_manager = PromptManager(self.config, self.logger)
         
         # 初始化ElderCare集成
         self.eldercare_enabled = False
@@ -176,6 +179,9 @@ class ConnectionHandler:
 
     async def handle_connection(self, ws):
         try:
+            # 获取运行中的事件循环（必须在异步上下文中）
+            self.loop = asyncio.get_running_loop()
+
             # 获取并验证headers
             self.headers = dict(ws.request.headers)
             real_ip = self.headers.get("x-real-ip") or self.headers.get(
@@ -213,10 +219,8 @@ class ConnectionHandler:
             self.welcome_msg = self.config["xiaozhi"]
             self.welcome_msg["session_id"] = self.session_id
 
-            # 获取差异化配置
-            self._initialize_private_config()
-            # 异步初始化
-            self.executor.submit(self._initialize_components)
+            # 在后台初始化配置和组件（完全不阻塞主循环）
+            asyncio.create_task(self._background_initialize())
 
             try:
                 async for message in self.websocket:
@@ -255,7 +259,9 @@ class ConnectionHandler:
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
                         loop.run_until_complete(
-                            self.memory.save_memory(self.dialogue.dialogue)
+                            self.memory.save_memory(
+                                self.dialogue.dialogue, self.session_id
+                            )
                         )
                     except Exception as e:
                         self.logger.bind(tag=TAG).error(f"保存记忆失败: {e}")
@@ -278,8 +284,37 @@ class ConnectionHandler:
                     f"保存记忆后关闭连接失败: {close_error}"
                 )
 
+    async def _discard_message_with_bind_prompt(self):
+        """丢弃消息并检查是否需要播放绑定提示"""
+        current_time = time.time()
+        # 检查是否需要播放绑定提示
+        if current_time - self.last_bind_prompt_time >= self.bind_prompt_interval:
+            self.last_bind_prompt_time = current_time
+            # 复用现有的绑定提示逻辑
+            from core.handle.receiveAudioHandle import check_bind_device
+
+            asyncio.create_task(check_bind_device(self))
+
     async def _route_message(self, message):
         """消息路由"""
+        # 检查是否已经获取到真实的绑定状态
+        if not self.bind_completed_event.is_set():
+            # 还没有获取到真实状态，等待直到获取到真实状态或超时
+            try:
+                await asyncio.wait_for(self.bind_completed_event.wait(), timeout=1)
+            except asyncio.TimeoutError:
+                # 超时仍未获取到真实状态，丢弃消息
+                await self._discard_message_with_bind_prompt()
+                return
+
+        # 已经获取到真实状态，检查是否需要绑定
+        if self.need_bind:
+            # 需要绑定，丢弃消息
+            await self._discard_message_with_bind_prompt()
+            return
+
+        # 不需要绑定，继续处理消息
+
         if isinstance(message, str):
             # 检查是否是ElderCare相关消息
             await self._handle_eldercare_message(message)
@@ -288,22 +323,6 @@ class ConnectionHandler:
             if self.vad is None:
                 return
             if self.asr is None:
-                return
-
-            # 未绑定设备直接丢弃所有音频，不进行ASR处理
-            if self.need_bind:
-                current_time = time.time()
-                # 检查是否需要播放绑定提示
-                if (
-                    current_time - self.last_bind_prompt_time
-                    >= self.bind_prompt_interval
-                ):
-                    self.last_bind_prompt_time = current_time
-                    # 复用现有的绑定提示逻辑
-                    from core.handle.receiveAudioHandle import check_bind_device
-
-                    asyncio.create_task(check_bind_device(self))
-                # 直接丢弃音频，不进行ASR处理
                 return
 
             # 处理来自MQTT网关的音频包
@@ -499,6 +518,15 @@ class ConnectionHandler:
 
     def _initialize_components(self):
         try:
+            if self.tts is None:
+                self.tts = self._initialize_tts()
+            # 打开语音合成通道
+            asyncio.run_coroutine_threadsafe(
+                self.tts.open_audio_channels(self), self.loop
+            )
+            if self.need_bind:
+                self.bind_completed_event.set()
+                return
             self.selected_module_str = build_module_string(
                 self.config.get("selected_module", {})
             )
@@ -522,16 +550,9 @@ class ConnectionHandler:
 
             # 初始化声纹识别
             self._initialize_voiceprint()
-
             # 打开语音识别通道
             asyncio.run_coroutine_threadsafe(
                 self.asr.open_audio_channels(self), self.loop
-            )
-            if self.tts is None:
-                self.tts = self._initialize_tts()
-            # 打开语音合成通道
-            asyncio.run_coroutine_threadsafe(
-                self.tts.open_audio_channels(self), self.loop
             )
 
             """加载记忆"""
@@ -547,6 +568,7 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).error(f"实例化组件失败: {e}")
 
     def _init_prompt_enhancement(self):
+
         # 更新上下文信息
         self.prompt_manager.update_context_info(self, self.client_ip)
         enhanced_prompt = self.prompt_manager.build_enhanced_prompt(
@@ -589,7 +611,11 @@ class ConnectionHandler:
 
     def _initialize_asr(self):
         """初始化ASR"""
-        if self._asr.interface_type == InterfaceType.LOCAL:
+        if (
+            self._asr is not None
+            and hasattr(self._asr, "interface_type")
+            and self._asr.interface_type == InterfaceType.LOCAL
+        ):
             # 如果公共ASR是本地服务，则直接返回
             # 因为本地一个实例ASR，可以被多个连接共享
             asr = self._asr
@@ -612,22 +638,35 @@ class ConnectionHandler:
         except Exception as e:
             self.logger.bind(tag=TAG).warning(f"声纹识别初始化失败: {str(e)}")
 
-    def _initialize_private_config(self):
-        """如果是从配置文件获取，则进行二次实例化"""
+    async def _background_initialize(self):
+        """在后台初始化配置和组件（完全不阻塞主循环）"""
+        try:
+            # 异步获取差异化配置
+            await self._initialize_private_config_async()
+            # 在线程池中初始化组件
+            self.executor.submit(self._initialize_components)
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"后台初始化失败: {e}")
+
+    async def _initialize_private_config_async(self):
+        """从接口异步获取差异化配置（异步版本，不阻塞主循环）"""
         if not self.read_config_from_api:
+            self.need_bind = False
+            self.bind_completed_event.set()
             return
-        """从接口获取差异化的配置进行二次实例化，非全量重新实例化"""
         try:
             begin_time = time.time()
-            private_config = get_private_config_from_api(
+            private_config = await get_private_config_from_api(
                 self.config,
                 self.headers.get("device-id"),
                 self.headers.get("client-id", self.headers.get("device-id")),
             )
             private_config["delete_audio"] = bool(self.config.get("delete_audio", True))
             self.logger.bind(tag=TAG).info(
-                f"{time.time() - begin_time} 秒，获取差异化配置成功: {json.dumps(filter_sensitive_info(private_config), ensure_ascii=False)}"
+                f"{time.time() - begin_time} 秒，异步获取差异化配置成功: {json.dumps(filter_sensitive_info(private_config), ensure_ascii=False)}"
             )
+            self.need_bind = False
+            self.bind_completed_event.set()
         except DeviceNotFoundException as e:
             self.need_bind = True
             private_config = {}
@@ -637,7 +676,7 @@ class ConnectionHandler:
             private_config = {}
         except Exception as e:
             self.need_bind = True
-            self.logger.bind(tag=TAG).error(f"获取差异化配置失败: {e}")
+            self.logger.bind(tag=TAG).error(f"异步获取差异化配置失败: {e}")
             private_config = {}
 
         init_llm, init_tts, init_memory, init_intent = (
@@ -710,8 +749,14 @@ class ConnectionHandler:
             self.chat_history_conf = int(private_config["chat_history_conf"])
         if private_config.get("mcp_endpoint", None) is not None:
             self.config["mcp_endpoint"] = private_config["mcp_endpoint"]
+        if private_config.get("context_providers", None) is not None:
+            self.config["context_providers"] = private_config["context_providers"]
+
+        # 使用 run_in_executor 在线程池中执行 initialize_modules，避免阻塞主循环
         try:
-            modules = initialize_modules(
+            modules = await self.loop.run_in_executor(
+                None,  # 使用默认线程池
+                initialize_modules,
                 self.logger,
                 private_config,
                 init_vad,
@@ -1145,8 +1190,8 @@ class ConnectionHandler:
     def _process_report(self, type, text, audio_data, report_time):
         """处理上报任务"""
         try:
-            # 执行上报（传入二进制数据）
-            report(self, type, text, audio_data, report_time)
+            # 执行异步上报（在事件循环中运行）
+            asyncio.run(report(self, type, text, audio_data, report_time))
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"上报处理异常: {e}")
         finally:
@@ -1233,7 +1278,6 @@ class ConnectionHandler:
                         f"关闭线程池时出错: {executor_error}"
                     )
                 self.executor = None
-
             self.logger.bind(tag=TAG).info("连接资源已释放")
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"关闭连接时出错: {e}")
@@ -1262,6 +1306,11 @@ class ConnectionHandler:
                         q.get_nowait()
                     except queue.Empty:
                         break
+
+            # 重置音频流控器（取消后台任务并清空队列）
+            if hasattr(self, "audio_rate_controller") and self.audio_rate_controller:
+                self.audio_rate_controller.reset()
+                self.logger.bind(tag=TAG).debug("已重置音频流控器")
 
             self.logger.bind(tag=TAG).debug(
                 f"清理结束: TTS队列大小={self.tts.tts_text_queue.qsize()}, 音频队列大小={self.tts.tts_audio_queue.qsize()}"

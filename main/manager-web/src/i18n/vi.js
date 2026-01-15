@@ -22,9 +22,10 @@ export default {
   'header.clearHistory': 'Xóa lịch sử',
   'header.providerManagement': 'Quản lý nhà cung cấp',
   'header.serverSideManagement': 'Quản lý máy chủ',
+  'header.featureManagement': 'Cấu hình chức năng hệ thống',
   'header.changePassword': 'Đổi mật khẩu',
   'header.logout': 'Đăng xuất',
-  'header.searchPlaceholder': 'Tìm kiếm theo tên..',
+  'header.searchPlaceholder': 'Tìm tên hoặc MAC',
 
   // McpToolCallDialog component text
   'mcpToolCall.title': 'Gọi công cụ',
@@ -228,6 +229,26 @@ export default {
   'voicePrintDialog.requiredDescription': 'Vui lòng nhập mô tả',
   'voicePrintDialog.requiredName': 'Vui lòng nhập tên',
   'voicePrintDialog.requiredAudioVector': 'Vui lòng chọn vector âm thanh',
+
+  // Context provider dialog related
+  'contextProviderDialog.title': 'Chỉnh sửa nguồn',
+  'contextProviderDialog.noContextApi': 'Không có API ngữ cảnh',
+  'contextProviderDialog.add': 'Thêm',
+  'contextProviderDialog.apiUrl': 'Địa chỉ API',
+  'contextProviderDialog.apiUrlPlaceholder': 'http://api.example.com/data',
+  'contextProviderDialog.requestHeaders': 'Header yêu cầu',
+  'contextProviderDialog.headerKeyPlaceholder': 'Khóa',
+  'contextProviderDialog.headerValuePlaceholder': 'Giá trị',
+  'contextProviderDialog.noHeaders': 'Không có Headers',
+  'contextProviderDialog.addHeader': 'Thêm Header',
+  'contextProviderDialog.cancel': 'Hủy bỏ',
+  'contextProviderDialog.confirm': 'Xác nhận',
+
+  // Role config page - context provider related
+  'roleConfig.contextProvider': 'Bối cảnh',
+  'roleConfig.contextProviderSuccess': 'Đã thêm thành công {count} nguồn.',
+  'roleConfig.contextProviderDocLink': 'Cách triển khai nguồn ngữ cảnh',
+  'roleConfig.editContextProvider': 'Chỉnh sửa nguồn',
 
   // Voice print page related
   'voicePrint.pageTitle': 'Nhận dạng dấu giọng nói',
@@ -692,7 +713,7 @@ export default {
   'paramManagement.deleteFailed': 'Xóa thất bại, vui lòng thử lại',
   'paramManagement.operationCancelled': 'Đã hủy xóa',
   'paramManagement.operationClosed': 'Đã đóng thao tác',
-  'paramManagement.updateSuccess': 'Cập nhật thành công',
+  'paramManagement.updateSuccess': 'Cập nhật thành công. Một số cấu hình chỉ có hiệu lực sau khi khởi động lại mô-đun xiaozhi-server.',
   'paramManagement.addSuccess': 'Thêm thành công',
   'paramManagement.updateFailed': 'Cập nhật thất bại',
   'paramManagement.addFailed': 'Thêm thất bại',
@@ -758,6 +779,16 @@ export default {
   'roleConfig.fetchConfigFailed': 'Không thể lấy cấu hình',
   'roleConfig.fetchModelsFailed': 'Không thể tải danh sách mô hình',
   'roleConfig.fetchPluginsFailed': 'Không thể tải danh sách plugin',
+  'roleConfig.cannotResumeAudio': 'Không thể tiếp tục phát âm thanh',
+  'roleConfig.selectVoiceFirst': 'Vui lòng chọn giọng nói trước',
+  'roleConfig.audioLoadTimeout': 'Tải âm thanh mất quá nhiều thời gian, vui lòng thử lại sau',
+  'roleConfig.cloneAudioPlayFailed': 'Phát âm thanh sao chép thất bại',
+  'roleConfig.cannotPlayCloneAudio': 'Không thể phát âm thanh sao chép',
+  'roleConfig.getCloneAudioFailed': 'Không thể lấy âm thanh sao chép',
+  'roleConfig.noPreviewAudio': 'Giọng nói này không có âm thanh xem trước',
+  'roleConfig.audioPlayFailed': 'Phát âm thanh thất bại',
+  'roleConfig.cannotPlayAudio': 'Không thể phát âm thanh',
+  'roleConfig.audioPlayError': 'Lỗi trong quá trình phát âm thanh',
 
   // Function management dialog text
   'functionDialog.title': 'Quản lý chức năng',
@@ -800,7 +831,7 @@ export default {
   'modelConfig.rag': 'RAG',
   'modelConfig.modelId': 'ID mô hình',
   'modelConfig.modelName': 'Tên mô hình',
-  'modelConfig.provider': 'Nhà cung cấp',
+  'modelConfig.provider': 'Loại giao diện',
   'modelConfig.unknown': 'Không xác định',
   'modelConfig.isEnabled': 'Đã bật',
   'modelConfig.isDefault': 'Mặc định',
@@ -831,7 +862,7 @@ export default {
   'modelConfig.enableSuccess': 'Bật thành công',
   'modelConfig.disableSuccess': 'Tắt thành công',
   'modelConfig.operationFailed': 'Thao tác thất bại',
-  'modelConfig.setDefaultSuccess': 'Đặt mô hình mặc định thành công',
+  'modelConfig.setDefaultSuccess': 'Đặt mô hình mặc định thành công, vui lòng khởi động lại module xiaozhi-server thủ công kịp thời',
   'modelConfig.itemsPerPage': '{items} mục/trang',
   'modelConfig.firstPage': 'Trang đầu',
   'modelConfig.prevPage': 'Trang trước',
@@ -898,6 +929,10 @@ export default {
   'ttsModel.selectVoiceToDelete': 'Vui lòng chọn giọng nói để xóa',
   'ttsModel.warning': 'Cảnh báo',
   'ttsModel.confirmDeleteVoice': 'Bạn có chắc chắn muốn xóa {count} giọng nói?',
+  'ttsModel.voiceCodeNameLanguageRequired': 'Mã giọng nói, tên giọng nói và loại ngôn ngữ không được để trống',
+  'ttsModel.deleteCancelled': 'Xóa đã bị hủy',
+  'ttsModel.updateSuccess': 'Cập nhật thành công',
+  'ttsModel.saveSuccess': 'Lưu thành công',
 
   // OTA Management Page Text
   'otaManagement.firmwareManagement': 'Quản lý firmware',
@@ -1262,4 +1297,35 @@ export default {
   'knowledgeFileUpload.content': 'Nội dung:',
   'knowledgeFileUpload.testQuestionRequired': 'Vui lòng nhập câu hỏi kiểm tra',
   'knowledgeBaseDialog.descriptionRequired': 'Vui lòng nhập mô tả cơ sở kiến thức',
+
+  // Feature Management page text
+  'featureManagement.selectAll': 'Chọn tất cả',
+  'featureManagement.deselectAll': 'Bỏ chọn tất cả',
+  'featureManagement.save': 'Lưu cấu hình',
+  'featureManagement.reset': 'Đặt lại',
+  'featureManagement.group.featureManagement': 'Có bật tính năng/khối này lên hay không',
+  'featureManagement.group.voiceManagement': 'Khi cấu hình agent, có hiển thị với người dùng hay không',
+  'featureManagement.noFeatures': 'Chưa có tính năng nào',
+  'featureManagement.contactAdmin': 'Vui lòng liên hệ quản trị viên để cấu hình tính năng',
+  'featureManagement.saveSuccess': 'Cấu hình tính năng đã được lưu thành công',
+  'featureManagement.resetConfirm': 'Bạn có chắc chắn muốn đặt lại tất cả cấu hình tính năng?',
+  'featureManagement.confirm': 'Xác nhận',
+  'featureManagement.cancel': 'Hủy bỏ',
+  'featureManagement.resetSuccess': 'Cấu hình tính năng đã được đặt lại thành công',
+  'featureManagement.noChanges': 'Không có thay đổi nào để lưu',
+
+  // Feature names and descriptions
+  'feature.voiceprintRecognition.name': 'Nhận dạng giọng nói',
+  'feature.voiceprintRecognition.description': 'Xác minh danh tính người dùng thông qua công nghệ nhận dạng giọng nói, cung cấp trải nghiệm tương tác giọng nói an toàn',
+  'feature.voiceClone.name': 'Nhân bản âm sắc',
+  'feature.voiceClone.description': 'Sử dụng công nghệ AI để nhân bản âm sắc cụ thể, đạt được tổng hợp giọng nói cá nhân hóa',
+  'feature.knowledgeBase.name': 'Cơ sở kiến thức',
+  'feature.knowledgeBase.description': 'Xây dựng và quản lý hệ thống cơ sở kiến thức, cung cấp hỗ trợ kiến thức chuyên môn cho trợ lý AI',
+  'feature.mcpAccessPoint.name': 'Điểm truy cập MCP',
+  'feature.mcpAccessPoint.description': 'Cung cấp điểm truy cập giao thức MCP, hỗ trợ tích hợp các công cụ và dịch vụ bên ngoài',
+  'feature.vad.name': 'Phát hiện hoạt động giọng nói',
+  'feature.vad.description': 'Tự động phát hiện hoạt động giọng nói, tối ưu hóa hiệu suất phản hồi tương tác giọng nói',
+  'feature.asr.name': 'Nhận dạng giọng nói',
+  'feature.asr.description': 'Chuyển đổi giọng nói thành văn bản, thực hiện chức năng tương tác ngôn ngữ tự nhiên',
+
 }

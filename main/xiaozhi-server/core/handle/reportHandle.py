@@ -10,7 +10,6 @@ TTS上报功能已集成到ConnectionHandler类中。
 """
 
 import time
-import gc
 import opuslib_next
 
 from config.manage_api_client import report as manage_report
@@ -18,7 +17,7 @@ from config.manage_api_client import report as manage_report
 TAG = __name__
 
 
-def report(conn, type, text, opus_data, report_time):
+async def report(conn, type, text, opus_data, report_time):
     """执行聊天记录上报操作
 
     Args:
@@ -33,8 +32,8 @@ def report(conn, type, text, opus_data, report_time):
             audio_data = opus_to_wav(conn, opus_data)
         else:
             audio_data = None
-        # 执行上报
-        manage_report(
+        # 执行异步上报
+        await manage_report(
             mac_address=conn.device_id,
             session_id=conn.session_id,
             chat_type=type,
@@ -97,7 +96,6 @@ def opus_to_wav(conn, opus_data):
         if decoder is not None:
             try:
                 del decoder
-                gc.collect()
             except Exception as e:
                 conn.logger.bind(tag=TAG).debug(f"释放decoder资源时出错: {e}")
 

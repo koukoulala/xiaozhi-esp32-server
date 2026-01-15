@@ -55,10 +55,24 @@
                         </div>
                       </div>
                     </el-form-item>
+                    <el-form-item :label="$t('roleConfig.contextProvider') + '：'" class="context-provider-item">
+                      <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <span style="color: #606266; font-size: 13px;">
+                          {{ $t('roleConfig.contextProviderSuccess', { count: currentContextProviders.length }) }}<a href="https://github.com/xinnan-tech/xiaozhi-esp32-server/blob/main/docs/context-provider-integration.md" target="_blank" class="doc-link">{{ $t('roleConfig.contextProviderDocLink') }}</a>
+                        </span>
+                        <el-button
+                          class="edit-function-btn"
+                          size="small"
+                          @click="openContextProviderDialog"
+                        >
+                          {{ $t('roleConfig.editContextProvider') }}
+                        </el-button>
+                      </div>
+                    </el-form-item>
                     <el-form-item :label="$t('roleConfig.roleIntroduction') + '：'">
                       <el-input
                         type="textarea"
-                        rows="9"
+                        rows="8"
                         resize="none"
                         :placeholder="$t('roleConfig.pleaseEnterContent')"
                         v-model="form.systemPrompt"
@@ -71,7 +85,7 @@
                     <el-form-item :label="$t('roleConfig.memoryHis') + '：'">
                       <el-input
                         type="textarea"
-                        rows="6"
+                        rows="4"
                         resize="none"
                         v-model="form.summaryMemory"
                         maxlength="2000"
@@ -107,7 +121,11 @@
                   </div>
                   <div class="form-column">
                     <div class="model-row">
-                      <el-form-item :label="$t('roleConfig.vad')" class="model-item">
+                      <el-form-item 
+                        v-if="featureStatus.vad" 
+                        :label="$t('roleConfig.vad')" 
+                        class="model-item"
+                      >
                         <div class="model-select-wrapper">
                           <el-select
                             v-model="form.model.vadModelId"
@@ -125,7 +143,11 @@
                           </el-select>
                         </div>
                       </el-form-item>
-                      <el-form-item :label="$t('roleConfig.asr')" class="model-item">
+                      <el-form-item 
+                        v-if="featureStatus.asr" 
+                        :label="$t('roleConfig.asr')" 
+                        class="model-item"
+                      >
                         <div class="model-select-wrapper">
                           <el-select
                             v-model="form.model.asrModelId"
@@ -267,6 +289,11 @@
       @update-functions="handleUpdateFunctions"
       @dialog-closed="handleDialogClosed"
     />
+    <context-provider-dialog
+      :visible.sync="showContextProviderDialog"
+      :providers="currentContextProviders"
+      @confirm="handleUpdateContext"
+    />
   </div>
 </template>
 
@@ -275,14 +302,17 @@ import Api from "@/apis/api";
 import { getServiceUrl } from "@/apis/api";
 import RequestService from "@/apis/httpRequest";
 import FunctionDialog from "@/components/FunctionDialog.vue";
+import ContextProviderDialog from "@/components/ContextProviderDialog.vue";
 import HeaderBar from "@/components/HeaderBar.vue";
 import i18n from "@/i18n";
+import featureManager from "@/utils/featureManager"; 
 
 export default {
   name: "RoleConfigPage",
-  components: { HeaderBar, FunctionDialog },
+  components: { HeaderBar, FunctionDialog, ContextProviderDialog },
   data() {
     return {
+      showContextProviderDialog: false,
       form: {
         agentCode: "",
         agentName: "",
@@ -320,12 +350,18 @@ export default {
       voiceDetails: {}, // 保存完整的音色信息
       showFunctionDialog: false,
       currentFunctions: [],
+      currentContextProviders: [],
       allFunctions: [],
       originalFunctions: [],
       playingVoice: false,
       isPaused: false,
       currentAudio: null,
       currentPlayingVoiceId: null,
+      // 功能状态
+      featureStatus: {
+        vad: false, // 语言检测活动功能状态
+        asr: false, // 语音识别功能状态
+      },
     };
   },
   methods: {
@@ -356,6 +392,7 @@ export default {
             paramInfo: item.params,
           };
         }),
+        contextProviders: this.currentContextProviders,
       };
       Api.agent.updateAgentConfig(this.$route.query.agentId, configData, ({ data }) => {
         if (data.code === 0) {
@@ -472,6 +509,9 @@ export default {
           };
           // 后端只给了最小映射：[{ id, agentId, pluginId }, ...]
           const savedMappings = data.data.functions || [];
+          
+          // 加载上下文配置
+          this.currentContextProviders = data.data.contextProviders || [];
 
           // 先保证 allFunctions 已经加载（如果没有，则先 fetchAllFunctions）
           const ensureFuncs = this.allFunctions.length
@@ -559,21 +599,15 @@ export default {
           this.voiceOptions = data.data.map((voice) => ({
             value: voice.id,
             label: voice.name,
-            // 复制音频相关字段，确保hasAudioPreview能检测到
+            // 只保留后端实际返回的音频相关字段
             voiceDemo: voice.voiceDemo,
-            demoUrl: voice.demoUrl,
-            audioUrl: voice.audioUrl,
             voice_demo: voice.voice_demo,
-            sample_voice: voice.sample_voice,
-            referenceAudio: voice.referenceAudio,
-            // 新增：添加克隆音频相关字段
-            cloneAudioUrl: voice.cloneAudioUrl,
-            hasCloneAudio: voice.hasCloneAudio || false,
-            // 保存训练状态字段，用于判断是否为克隆音频
+            // 使用后端实际返回的 isClone 字段
+            isClone: Boolean(voice.isClone),
+            // 保存训练状态字段
             train_status: voice.trainStatus,
           }));
           // 保存完整的音色信息，添加调试信息
-          console.log("获取到的音色数据:", data.data);
           this.voiceDetails = data.data.reduce((acc, voice) => {
             acc[voice.id] = voice;
             return acc;
@@ -646,6 +680,12 @@ export default {
         this.showFunctionDialog = true;
       }
     },
+    openContextProviderDialog() {
+      this.showContextProviderDialog = true;
+    },
+    handleUpdateContext(providers) {
+      this.currentContextProviders = providers;
+    },
     handleUpdateFunctions(selected) {
       this.currentFunctions = selected;
     },
@@ -700,32 +740,15 @@ export default {
     },
     // 检查是否有音频预览
     hasAudioPreview(item) {
-      // 检查item中是否包含有效的音频URL字段或克隆音频字段
-      // 克隆音频通过hasCloneAudio标志或ID格式判断（非TTS开头的ID）
-      const isCloneAudio =
-        item.hasCloneAudio || (item.value && !item.value.startsWith("TTS"));
-
-      const audioFields = [
-        item.voiceDemo,
-        item.demoUrl,
-        item.audioUrl,
-        item.voice_demo,
-        item.sample_voice,
-        item.referenceAudio,
-        item.cloneAudioUrl, // 克隆音频的URL
-      ];
-
-      // 检查是否有任何音频字段是有效的URL
-      const hasUrlAudio = audioFields.some(
-        (field) =>
-          field !== undefined &&
-          field !== null &&
-          typeof field === "string" &&
-          field.trim() !== "" &&
-          field.toLowerCase().startsWith("http")
-      );
-
-      return hasUrlAudio || isCloneAudio;
+      // 检查是否为克隆音频
+      // 使用后端实际返回的 isClone 字段
+      const isCloneAudio = Boolean(item.isClone);
+      
+      // 检查是否有有效的音频URL，只使用后端实际返回的字段
+      const hasValidAudioUrl = !!((item.voice_demo || item.voiceDemo)?.trim());
+      
+      // 克隆音频始终显示播放按钮，普通音频需要有有效URL才显示
+      return isCloneAudio || hasValidAudioUrl;
     },
 
     // 播放/暂停音频切换
@@ -736,7 +759,7 @@ export default {
           // 从暂停状态恢复播放
           this.currentAudio.play().catch((error) => {
             console.error("恢复播放失败:", error);
-            this.$message.warning("无法恢复播放音频");
+            this.$message.warning(this.$t('roleConfig.cannotResumeAudio'));
           });
           this.isPaused = false;
         } else {
@@ -757,7 +780,7 @@ export default {
       const targetVoiceId = voiceId || this.form.ttsVoiceId;
 
       if (!targetVoiceId) {
-        this.$message.warning("请先选择一个音色");
+        this.$message.warning(this.$t('roleConfig.selectVoiceFirst'));
         return;
       }
 
@@ -784,10 +807,8 @@ export default {
         let isCloneAudio = false;
 
         if (voiceDetail) {
-          // 首先检查是否是克隆音频（通过ID格式判断，非TTS开头的ID）
-          isCloneAudio =
-            voiceDetail.hasCloneAudio ||
-            (voiceDetail.id && !voiceDetail.id.startsWith("TTS"));
+          // 使用后端实际返回的 isClone 字段判断是否为克隆音频
+          isCloneAudio = Boolean(voiceDetail.isClone);
           console.log(
             "克隆音频判断结果:",
             isCloneAudio,
@@ -843,7 +864,7 @@ export default {
             // 设置超时，防止加载过长时间
             const timeoutId = setTimeout(() => {
               if (this.currentAudio && this.playingVoice) {
-                this.$message.warning("音频加载时间较长，请稍后重试");
+                this.$message.warning(this.$t('roleConfig.audioLoadTimeout'));
                 this.playingVoice = false;
               }
             }, 10000); // 10秒超时
@@ -852,7 +873,7 @@ export default {
             this.currentAudio.onerror = () => {
               clearTimeout(timeoutId);
               console.error("克隆音频播放错误");
-              this.$message.warning("克隆音频播放失败");
+              this.$message.warning(this.$t('roleConfig.cloneAudioPlayFailed'));
               this.playingVoice = false;
             };
 
@@ -874,12 +895,12 @@ export default {
                 this.currentAudio.play().catch((error) => {
                   clearTimeout(timeoutId);
                   console.error("播放克隆音频失败:", error);
-                  this.$message.warning("无法播放克隆音频");
+                  this.$message.warning(this.$t('roleConfig.cannotPlayCloneAudio'));
                   this.playingVoice = false;
                 });
               } else {
                 clearTimeout(timeoutId);
-                this.$message.warning("获取克隆音频失败");
+                this.$message.warning(this.$t('roleConfig.getCloneAudioFailed'));
                 this.playingVoice = false;
               }
             });
@@ -887,14 +908,10 @@ export default {
             // 返回，避免继续执行下面的普通音频播放逻辑
             return;
           } else {
-            // 对于普通音频，尝试各种可能的URL字段
+            // 对于普通音频，只使用后端实际返回的字段
             audioUrl =
               voiceDetail.voiceDemo ||
-              voiceDetail.demoUrl ||
-              voiceDetail.audioUrl ||
-              voiceDetail.voice_demo ||
-              voiceDetail.sample_voice ||
-              voiceDetail.cloneAudioUrl; // 克隆音频URL
+              voiceDetail.voice_demo;
           }
 
           // 如果没有找到，尝试检查是否有URL格式的字段
@@ -919,7 +936,7 @@ export default {
 
         if (!audioUrl) {
           // 如果没有音频URL，显示友好的提示
-          this.$message.warning("该音色暂无可预览的音频");
+          this.$message.warning(this.$t('roleConfig.noPreviewAudio'));
           return;
         }
 
@@ -938,7 +955,7 @@ export default {
           // 设置超时，防止加载过长时间
           const timeoutId = setTimeout(() => {
             if (this.currentAudio && this.playingVoice) {
-              this.$message.warning("音频加载时间较长，请稍后重试");
+              this.$message.warning(this.$t('roleConfig.audioLoadTimeout'));
               this.playingVoice = false;
             }
           }, 10000); // 10秒超时
@@ -947,7 +964,7 @@ export default {
           this.currentAudio.onerror = () => {
             clearTimeout(timeoutId);
             console.error("音频播放错误");
-            this.$message.warning("音频播放失败");
+            this.$message.warning(this.$t('roleConfig.audioPlayFailed'));
             this.playingVoice = false;
           };
 
@@ -965,19 +982,32 @@ export default {
           this.currentAudio.play().catch((error) => {
             clearTimeout(timeoutId);
             console.error("播放失败:", error);
-            this.$message.warning("无法播放音频");
+            this.$message.warning(this.$t('roleConfig.cannotPlayAudio'));
             this.playingVoice = false;
           });
         }
       } catch (error) {
         console.error("播放音频过程出错:", error);
-        this.$message.error("播放音频过程出错");
+        this.$message.error(this.$t('roleConfig.audioPlayError'));
         this.playingVoice = false;
       }
     },
     updateChatHistoryConf() {
       if (this.form.model.memModelId === "Memory_nomem") {
         this.form.chatHistoryConf = 0;
+      }
+    },
+    // 加载功能状态
+    async loadFeatureStatus() {
+      try {
+        // 确保featureManager已初始化完成
+        await featureManager.waitForInitialization();
+        const config = featureManager.getConfig();
+        this.featureStatus.voiceprintRecognition = config.voiceprintRecognition || false;
+        this.featureStatus.vad = config.vad || false;
+        this.featureStatus.asr = config.asr || false;
+      } catch (error) {
+        console.error("加载功能状态失败:", error);
       }
     },
   },
@@ -1002,7 +1032,7 @@ export default {
       immediate: true,
     },
   },
-  mounted() {
+  async mounted() {
     const agentId = this.$route.query.agentId;
     if (agentId) {
       this.fetchAgentConfig(agentId);
@@ -1010,6 +1040,8 @@ export default {
     }
     this.fetchModelOptions();
     this.fetchTemplates();
+    // 加载功能状态，确保featureManager已初始化
+    await this.loadFeatureStatus();
   },
 };
 </script>
@@ -1298,6 +1330,26 @@ export default {
   justify-content: flex-end;
 }
 
+.chat-history-options ::v-deep .el-radio-button {
+  border-color: #5778ff;
+}
+
+.chat-history-options ::v-deep .el-radio-button .el-radio-button__inner {
+  color: #5778ff;
+  border-color: #5778ff;
+  background-color: transparent;
+}
+
+.chat-history-options ::v-deep .el-radio-button.is-active .el-radio-button__inner {
+  background-color: #5778ff;
+  border-color: #5778ff;
+  color: white;
+}
+
+.chat-history-options ::v-deep .el-radio-button .el-radio-button__inner:hover {
+  color: #5778ff;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -1344,5 +1396,19 @@ export default {
   width: 32px;
   height: 32px;
   margin-left: 8px;
+}
+
+.context-provider-item ::v-deep .el-form-item__label {
+  line-height: 42px !important;
+}
+
+.doc-link {
+  color: #5778ff;
+  text-decoration: none;
+  margin-left: 4px;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 </style>

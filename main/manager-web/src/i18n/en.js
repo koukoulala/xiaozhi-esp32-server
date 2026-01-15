@@ -22,9 +22,10 @@ export default {
   'header.clearHistory': 'Clear History',
   'header.providerManagement': 'Provider Management',
   'header.serverSideManagement': 'Server Management',
+  'header.featureManagement': 'System Feature Management',
   'header.changePassword': 'Change Password',
   'header.logout': 'Logout',
-  'header.searchPlaceholder': 'Search by name..',
+  'header.searchPlaceholder': 'Search name or mac',
 
   // McpToolCallDialog component text
   'mcpToolCall.title': 'Tool Call',
@@ -228,6 +229,26 @@ export default {
   'voicePrintDialog.requiredDescription': 'Please enter description',
   'voicePrintDialog.requiredName': 'Please enter name',
   'voicePrintDialog.requiredAudioVector': 'Please select audio vector',
+
+  // Context provider dialog related
+  'contextProviderDialog.title': 'Edit Source',
+  'contextProviderDialog.noContextApi': 'No Context API',
+  'contextProviderDialog.add': 'Add',
+  'contextProviderDialog.apiUrl': 'API URL',
+  'contextProviderDialog.apiUrlPlaceholder': 'http://api.example.com/data',
+  'contextProviderDialog.requestHeaders': 'Request Headers',
+  'contextProviderDialog.headerKeyPlaceholder': 'Key',
+  'contextProviderDialog.headerValuePlaceholder': 'Value',
+  'contextProviderDialog.noHeaders': 'No Headers',
+  'contextProviderDialog.addHeader': 'Add Header',
+  'contextProviderDialog.cancel': 'Cancel',
+  'contextProviderDialog.confirm': 'Confirm',
+
+  // Role config page - context provider related
+  'roleConfig.contextProvider': 'Context',
+  'roleConfig.contextProviderSuccess': 'Successfully added {count} sources.',
+  'roleConfig.contextProviderDocLink': 'How to deploy context provider',
+  'roleConfig.editContextProvider': 'Edit Source',
 
   // Voice print page related
   'voicePrint.pageTitle': 'Voice Print Recognition',
@@ -692,7 +713,7 @@ export default {
   'paramManagement.deleteFailed': 'Deletion failed, please try again',
   'paramManagement.operationCancelled': 'Deletion cancelled',
   'paramManagement.operationClosed': 'Operation closed',
-  'paramManagement.updateSuccess': 'Update successful',
+  'paramManagement.updateSuccess': 'Update successful. Some configurations will take effect only after restarting the xiaozhi-server module.',
   'paramManagement.addSuccess': 'Add successful',
   'paramManagement.updateFailed': 'Update failed',
   'paramManagement.addFailed': 'Add failed',
@@ -758,6 +779,16 @@ export default {
   'roleConfig.fetchConfigFailed': 'Failed to fetch configuration',
   'roleConfig.fetchModelsFailed': 'Failed to fetch model list',
   'roleConfig.fetchPluginsFailed': 'Failed to fetch plugin list',
+  'roleConfig.cannotResumeAudio': 'Cannot resume audio playback',
+  'roleConfig.selectVoiceFirst': 'Please select a voice first',
+  'roleConfig.audioLoadTimeout': 'Audio loading takes too long, please try again later',
+  'roleConfig.cloneAudioPlayFailed': 'Clone audio playback failed',
+  'roleConfig.cannotPlayCloneAudio': 'Cannot play clone audio',
+  'roleConfig.getCloneAudioFailed': 'Failed to get clone audio',
+  'roleConfig.noPreviewAudio': 'This voice has no preview audio available',
+  'roleConfig.audioPlayFailed': 'Audio playback failed',
+  'roleConfig.cannotPlayAudio': 'Cannot play audio',
+  'roleConfig.audioPlayError': 'Error occurred during audio playback',
 
   // Function management dialog text
   'functionDialog.title': 'Function Management',
@@ -800,7 +831,7 @@ export default {
   'modelConfig.rag': 'RAG',
   'modelConfig.modelId': 'Model ID',
   'modelConfig.modelName': 'Model Name',
-  'modelConfig.provider': 'Provider',
+  'modelConfig.provider': 'Interface Type',
   'modelConfig.unknown': 'Unknown',
   'modelConfig.isEnabled': 'Enabled',
   'modelConfig.isDefault': 'Default',
@@ -831,7 +862,7 @@ export default {
   'modelConfig.enableSuccess': 'Enable successful',
   'modelConfig.disableSuccess': 'Disable successful',
   'modelConfig.operationFailed': 'Operation failed',
-  'modelConfig.setDefaultSuccess': 'Set default model successful',
+  'modelConfig.setDefaultSuccess': 'Set default model successful, please restart the xiaozhi-server module manually in time',
   'modelConfig.itemsPerPage': '{items} items/page',
   'modelConfig.firstPage': 'First Page',
   'modelConfig.prevPage': 'Previous Page',
@@ -898,6 +929,10 @@ export default {
   'ttsModel.selectVoiceToDelete': 'Please select voices to delete',
   'ttsModel.warning': 'Warning',
   'ttsModel.confirmDeleteVoice': 'Are you sure to delete {count} voices?',
+  'ttsModel.voiceCodeNameLanguageRequired': 'Voice code, voice name and language type cannot be empty',
+  'ttsModel.deleteCancelled': 'Deletion cancelled',
+  'ttsModel.updateSuccess': 'Update successful',
+  'ttsModel.saveSuccess': 'Save successful',
 
   // OTA Management Page Text
   'otaManagement.firmwareManagement': 'Firmware Management',
@@ -1262,4 +1297,35 @@ export default {
   'knowledgeFileUpload.content': 'Content:',
   'knowledgeFileUpload.testQuestionRequired': 'Please enter test question',
   'knowledgeBaseDialog.descriptionRequired': 'Please enter knowledge base description',
+
+  // Feature Management page text
+  'featureManagement.selectAll': 'Select All',
+  'featureManagement.deselectAll': 'Deselect All',
+  'featureManagement.save': 'Save Configuration',
+  'featureManagement.reset': 'Reset',
+  'featureManagement.group.featureManagement': 'Enable/Disable the feature/section',
+  'featureManagement.group.voiceManagement': 'Visible to users during agent configuration',
+  'featureManagement.noFeatures': 'No features available',
+  'featureManagement.contactAdmin': 'Please contact administrator to configure features',
+  'featureManagement.saveSuccess': 'Feature configuration saved successfully',
+  'featureManagement.resetConfirm': 'Are you sure you want to reset all feature configurations?',
+  'featureManagement.confirm': 'Confirm',
+  'featureManagement.cancel': 'Cancel',
+  'featureManagement.resetSuccess': 'Feature configuration reset successfully',
+  'featureManagement.noChanges': 'No changes to save',
+
+  // Feature names and descriptions
+  'feature.voiceprintRecognition.name': 'Voiceprint Recognition',
+  'feature.voiceprintRecognition.description': 'Verify user identity through voiceprint recognition technology, providing secure voice interaction experience',
+  'feature.voiceClone.name': 'Voice Clone',
+  'feature.voiceClone.description': 'Clone specific voice timbre using AI technology to achieve personalized voice synthesis',
+  'feature.knowledgeBase.name': 'Knowledge Base',
+  'feature.knowledgeBase.description': 'Build and manage knowledge base system to provide professional knowledge support for AI assistants',
+  'feature.mcpAccessPoint.name': 'MCP Access Point',
+  'feature.mcpAccessPoint.description': 'Provide MCP protocol access points to support integration of external tools and services',
+  'feature.vad.name': 'Voice Activity Detection',
+  'feature.vad.description': 'Automatically detect voice activity to optimize voice interaction response efficiency',
+  'feature.asr.name': 'Speech Recognition',
+  'feature.asr.description': 'Convert speech to text to enable natural language interaction functionality',
+
 }
