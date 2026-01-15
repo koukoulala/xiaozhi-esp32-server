@@ -23,7 +23,7 @@ public class EcAgentServiceImpl implements EcAgentService {
     @Override
     public List<AgentResponse> getUserAgents(Long userId) {
         // 获取用户的智能体列表
-        List<AgentDTO> agentDTOList = agentService.getUserAgents(userId);
+        List<AgentDTO> agentDTOList = agentService.getUserAgents(userId, null, null);
         
         List<AgentResponse> responseList = new ArrayList<>();
         for (AgentDTO agentDTO : agentDTOList) {

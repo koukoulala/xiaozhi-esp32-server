@@ -8,6 +8,7 @@ npm install
 npm run serve
 
 cd /home/AzureVMCPU/xiaozhi-esp32-server/main/xiaozhi-server
+conda activate xiaozhi
 nohup python app.py > xiaozhi-server.log 2>&1 &
 
 cd /home/AzureVMCPU/xiaozhi-esp32-server/main/eldercare-web
@@ -15,6 +16,7 @@ npm run dev
 
 cd /home/AzureVMCPU/xiaozhi-esp32-server/main/xiaozhi-server/test && python3 -m http.server 8080 > test_http_server.log 2>&1 &
 http://20.64.152.107:8080/test_page.html
+http://20.64.152.107:8002/xiaozhi/ota/
 
 ssh -L 8080:localhost:8080 -L 8000:localhost:8000 -L 8002:localhost:8002 AzureVMCPU@20.64.152.107
 http://localhost:8080/test_page.html

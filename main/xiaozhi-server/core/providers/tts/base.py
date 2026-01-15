@@ -210,6 +210,28 @@ class TTSProviderBase(ABC):
     async def text_to_speak(self, text, output_file):
         pass
 
+    def upload_voice(self, audio_file_path: str, custom_name: str, reference_text: str) -> dict:
+        """上传音色到TTS服务并获取音色ID
+        
+        Args:
+            audio_file_path: 参考音频文件路径
+            custom_name: 自定义音色名称
+            reference_text: 参考音频的文字内容
+            
+        Returns:
+            dict: {
+                "success": bool,
+                "voice_id": str,  # 上传成功后返回的音色ID (uri)
+                "message": str    # 错误信息
+            }
+        """
+        # 默认实现，子类可以重写
+        return {
+            "success": False,
+            "voice_id": None,
+            "message": "该TTS提供者不支持音色上传功能"
+        }
+
     def audio_to_pcm_data_stream(
         self, audio_file_path, callback: Callable[[Any], Any] = None
     ):

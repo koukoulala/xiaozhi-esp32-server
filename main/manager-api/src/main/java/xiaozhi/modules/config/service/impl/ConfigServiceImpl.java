@@ -94,6 +94,7 @@ public class ConfigServiceImpl implements ConfigService {
                 agent.getTtsModelId(),
                 agent.getMemModelId(),
                 agent.getIntentModelId(),
+                null,
                 result,
                 isCache);
 

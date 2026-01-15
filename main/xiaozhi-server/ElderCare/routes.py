@@ -587,10 +587,12 @@ async def update_voice_handler(request: Request) -> Response:
                 if field.name == 'audioFile':
                     # 处理音频文件
                     audio_data = await field.read()
+                    # 从headers获取content_type，BodyPartReader没有直接的content_type属性
+                    field_content_type = field.headers.get('Content-Type', 'audio/webm')
                     audio_file = {
                         'data': audio_data,
                         'filename': field.filename,
-                        'content_type': field.content_type
+                        'content_type': field_content_type
                     }
                 else:
                     # 处理其他字段
@@ -714,19 +716,25 @@ async def get_default_voice_handler(request: Request) -> Response:
         return web.json_response({'success': False, 'message': str(e)})
 
 async def test_voice_synthesis_handler(request: Request) -> Response:
-    """测试声音合成（使用智能体TTS配置）"""
+    """测试声音合成（使用指定音色）"""
     try:
         data = await request.json()
         user_id = int(data.get('user_id', 0))
-        test_text = data.get('test_text', '你好，这是音色测试')
+        voice_id = data.get('voice_id', '')
+        test_text = data.get('test_text', '')
+        
+        if not voice_id:
+            return web.json_response({'success': False, 'message': '请指定音色ID'})
         
         eldercare_api = get_eldercare_api()
         if not eldercare_api:
             return web.json_response({'success': False, 'message': 'ElderCare API未初始化'})
         
-        result = eldercare_api.test_voice_clone_with_agent(user_id, test_text)
+        result = eldercare_api.test_voice_clone_with_agent(user_id, voice_id, test_text if test_text else None)
         return web.json_response(result)
     except Exception as e:
+        import traceback
+        print(f"测试语音合成错误: {traceback.format_exc()}")
         return web.json_response({'success': False, 'message': str(e)})
 
 async def create_health_reminder_handler(request: Request) -> Response:

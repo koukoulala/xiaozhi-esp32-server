@@ -43,6 +43,10 @@ function VoiceClone() {
   const mediaRecorder = useRef(null);
   const audioRef = useRef(null);
   
+  // 测试语音合成状态
+  const [testingVoiceId, setTestingVoiceId] = useState(null);
+  const [testAudioRef, setTestAudioRef] = useState(null);
+  
   // 表单状态
   const [voiceName, setVoiceName] = useState('');
   const [referenceText, setReferenceText] = useState('今天天气很好，记得出去散散步。早饭要记得吃，对身体好。');
@@ -366,6 +370,62 @@ function VoiceClone() {
     }
   };
 
+  // 测试语音合成
+  const testVoiceSynthesis = async (voice) => {
+    try {
+      setTestingVoiceId(voice.id);
+      setError(null);
+      
+      const result = await ElderCareAPI.testVoiceSynthesis(
+        userId, 
+        voice.id, 
+        voice.reference_text || '您好，这是一段语音合成测试。'
+      );
+      
+      if (result.success && result.audio_base64) {
+        // 将base64转换为音频播放
+        const audioData = atob(result.audio_base64);
+        const audioArray = new Uint8Array(audioData.length);
+        for (let i = 0; i < audioData.length; i++) {
+          audioArray[i] = audioData.charCodeAt(i);
+        }
+        const audioBlob = new Blob([audioArray], { type: 'audio/mp3' });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        
+        // 创建并播放音频
+        const audio = new Audio(audioUrl);
+        audio.onended = () => {
+          setTestingVoiceId(null);
+          URL.revokeObjectURL(audioUrl);
+        };
+        audio.onerror = () => {
+          setError('音频播放失败');
+          setTestingVoiceId(null);
+        };
+        
+        setTestAudioRef(audio);
+        await audio.play();
+        setSuccess(`正在播放"${voice.name}"的测试音频`);
+        setTimeout(() => setSuccess(null), 3000);
+      } else {
+        setError(result.message || '语音合成失败');
+        setTestingVoiceId(null);
+      }
+    } catch (err) {
+      setError('测试语音合成失败: ' + err.message);
+      setTestingVoiceId(null);
+    }
+  };
+
+  // 停止测试播放
+  const stopTestAudio = () => {
+    if (testAudioRef) {
+      testAudioRef.pause();
+      testAudioRef.currentTime = 0;
+    }
+    setTestingVoiceId(null);
+  };
+
   // 开始创建语音
   const startCreate = () => {
     resetForm();
@@ -505,6 +565,26 @@ function VoiceClone() {
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
+                    {/* 测试语音合成按钮 */}
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => testingVoiceId === voice.id ? stopTestAudio() : testVoiceSynthesis(voice)}
+                      disabled={isSubmitting || (testingVoiceId && testingVoiceId !== voice.id)}
+                    >
+                      {testingVoiceId === voice.id ? (
+                        <>
+                          <Square className="h-3 w-3 mr-1" />
+                          停止
+                        </>
+                      ) : (
+                        <>
+                          <Play className="h-3 w-3 mr-1" />
+                          测试
+                        </>
+                      )}
+                    </Button>
+                    
                     {currentAgent && currentAgent.tts_voice_id !== voice.id && (
                       <Button 
                         variant="outline" 

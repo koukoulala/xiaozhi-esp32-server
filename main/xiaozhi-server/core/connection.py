@@ -1464,18 +1464,18 @@ class ConnectionHandler:
             
             context = {}
             
-            # 获取用户最新健康数据
-            health_result = await eldercare_api.get_latest_health_data(self.user_id)
+            # 获取用户最新健康数据（同步方法，不用await）
+            health_result = eldercare_api.get_latest_health_data(self.user_id)
             if health_result.get('success') and health_result.get('data'):
                 context['health'] = health_result['data']
             
-            # 获取用户声音配置
-            voice_result = await eldercare_api.get_default_voice(self.user_id)
+            # 获取用户声音配置（同步方法，不用await）
+            voice_result = eldercare_api.get_default_voice(self.user_id)
             if voice_result.get('success') and voice_result.get('data'):
                 context['voice'] = voice_result['data']
             
-            # 获取待处理的提醒
-            reminders_result = await eldercare_api.get_reminders(self.user_id, 1)  # 获取今天的提醒
+            # 获取待处理的提醒（同步方法，不用await）
+            reminders_result = eldercare_api.get_reminders(self.user_id, 1)  # 获取今天的提醒
             if reminders_result.get('success') and reminders_result.get('data'):
                 # 过滤未完成的提醒
                 pending_reminders = [r for r in reminders_result['data'] if not r.get('is_completed')]
@@ -1499,11 +1499,10 @@ class ConnectionHandler:
             from ElderCare.api import get_eldercare_api
             eldercare_api = get_eldercare_api()
             if eldercare_api:
-                # 查询设备对应的用户
-                devices_result = await eldercare_api.get_user_devices(self.device_id)
-                if devices_result.get('success') and devices_result.get('data'):
-                    device_info = devices_result['data'][0]
-                    self.user_id = device_info.get('user_id', self.device_id)
+                # 查询设备对应的用户（同步方法，不用await）
+                user_result = eldercare_api.get_user_id_by_device(self.device_id)
+                if user_result.get('success') and user_result.get('user_id'):
+                    self.user_id = user_result['user_id']
                     self.logger.bind(tag=TAG).info(f"设置用户ID: {self.user_id} (设备: {self.device_id})")
                 else:
                     # 如果没找到设备记录，使用device_id作为user_id的fallback

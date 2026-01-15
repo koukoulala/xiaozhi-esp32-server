@@ -1246,11 +1246,12 @@ class ElderCareAPI:
             return {"success": False, "message": f"创建失败: {str(e)}"}
 
     def create_voice_clone_from_file(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """从文件路径创建声音克隆 - 保存到ai_tts_voice表"""
+        """从文件路径创建声音克隆 - 保存到ai_tts_voice表，并上传到TTS服务"""
         try:
             import uuid
             from datetime import datetime
             import shutil
+            from core.utils.tts import create_instance as create_tts_instance
             
             # 获取参数
             user_id = int(data.get('userId', 1))
@@ -1268,8 +1269,9 @@ class ElderCareAPI:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
-            # 获取tts_model_id
-            tts_model_id = 'TTS_CosyVoiceClone302AI'  # 默认值
+            # 获取tts_model_id和模型配置
+            tts_model_id = 'TTS_CosyVoiceSiliconflow'  # 默认值
+            tts_config = None
             
             if agent_id:
                 # 如果指定了智能体ID，获取其tts_model_id
@@ -1289,20 +1291,47 @@ class ElderCareAPI:
                     if agent_result and agent_result['tts_model_id']:
                         tts_model_id = agent_result['tts_model_id']
             
+            # 获取TTS模型配置
+            cursor.execute("SELECT config_json FROM ai_model_config WHERE id = %s", (tts_model_id,))
+            model_config_result = cursor.fetchone()
+            if model_config_result and model_config_result['config_json']:
+                tts_config = model_config_result['config_json']
+                if isinstance(tts_config, str):
+                    tts_config = json.loads(tts_config)
+            
             # 生成唯一的文件名
             file_extension = os.path.splitext(audio_file_path)[1] or '.webm'
             unique_filename = f"user_{user_id}_{uuid.uuid4().hex[:12]}{file_extension}"
             
             # 设置目标文件路径
-            voice_dir = os.path.join(current_dir, '..', '..', 'xiaozhi-server', 'data', 'voices')
+            voice_dir = os.path.join(current_dir, '..', 'data', 'voices')
             os.makedirs(voice_dir, exist_ok=True)
             target_path = os.path.join(voice_dir, unique_filename)
             
-            # 移动音频文件到目标位置
-            shutil.move(audio_file_path, target_path)
+            # 复制音频文件到目标位置（不是移动，以便后续上传）
+            shutil.copy(audio_file_path, target_path)
             
             # 生成voice_id（确保长度不超过数据库限制）
             voice_id = f"TTS_User{user_id}_{uuid.uuid4().hex[:8]}"
+            
+            # 尝试上传音色到TTS服务
+            uploaded_voice_uri = None
+            if tts_config:
+                tts_type = tts_config.get('type', '')
+                # 检查是否支持音色上传（目前支持siliconflow）
+                if tts_type in ['siliconflow', 'cosyvoice_siliconflow']:
+                    try:
+                        logger.info(f"正在上传音色到硅基流动TTS服务: {voice_name}")
+                        tts_provider = create_tts_instance(tts_type, tts_config, delete_audio_file=True)
+                        upload_result = tts_provider.upload_voice(target_path, voice_name, reference_text)
+                        
+                        if upload_result.get('success'):
+                            uploaded_voice_uri = upload_result.get('voice_id')
+                            logger.info(f"音色上传成功，获得URI: {uploaded_voice_uri}")
+                        else:
+                            logger.warning(f"音色上传失败: {upload_result.get('message')}")
+                    except Exception as upload_error:
+                        logger.error(f"音色上传异常: {upload_error}")
             
             # 生成remark字段（包含家庭成员信息）
             remark_data = {
@@ -1313,42 +1342,58 @@ class ElderCareAPI:
             remark = json.dumps(remark_data, ensure_ascii=False)
             
             # 插入到ai_tts_voice表
+            # 如果上传成功，将URI存储到tts_voice字段
             insert_sql = """
             INSERT INTO ai_tts_voice 
-            (id, name, reference_audio, reference_text, creator, updater, tts_model_id, 
+            (id, name, tts_voice, reference_audio, reference_text, creator, updater, tts_model_id, 
              create_date, update_date, remark)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
             now = datetime.now()
             # 使用相对路径存储（相对于项目根目录）
             relative_audio_path = f"data/voices/{unique_filename}"
             
+            # tts_voice字段：如果上传成功则使用URI，否则使用voice_id
+            tts_voice_value = uploaded_voice_uri if uploaded_voice_uri else voice_id.lower()
+            
             cursor.execute(insert_sql, (
-                voice_id, voice_name, relative_audio_path, reference_text, 
+                voice_id, voice_name, tts_voice_value, relative_audio_path, reference_text, 
                 user_id, user_id, tts_model_id, now, now, remark
             ))
             
             conn.commit()
+            
+            # 删除临时上传的文件
+            if os.path.exists(audio_file_path) and audio_file_path != target_path:
+                try:
+                    os.remove(audio_file_path)
+                except:
+                    pass
+            
             cursor.close()
             conn.close()
             
             return {
                 "success": True, 
-                "message": "音色上传成功",
+                "message": "音色上传成功" + ("，已同步到TTS服务" if uploaded_voice_uri else ""),
                 "data": {
                     "voice_id": voice_id,
                     "name": voice_name,
+                    "tts_voice": tts_voice_value,
                     "reference_audio": relative_audio_path,
                     "reference_text": reference_text,
                     "family_member_name": family_member_name,
                     "relationship": relationship,
-                    "tts_model_id": tts_model_id
+                    "tts_model_id": tts_model_id,
+                    "uploaded_to_tts": bool(uploaded_voice_uri)
                 }
             }
             
         except Exception as e:
             logger.error(f"创建音色失败: {e}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
             return {"success": False, "message": f"创建失败: {str(e)}"}
 
     def save_voice_clone(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1479,8 +1524,12 @@ class ElderCareAPI:
             return {"success": False, "message": f"删除失败: {str(e)}"}
 
     def update_voice(self, user_id: int, voice_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """编辑音色"""
+        """编辑音色（支持上传到TTS服务）"""
         try:
+            import uuid
+            import shutil
+            from core.utils.tts import create_instance as create_tts_instance
+            
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
@@ -1491,9 +1540,24 @@ class ElderCareAPI:
             if not voice_result:
                 return {"success": False, "message": "音色不存在或无权限"}
             
+            # 获取TTS模型配置
+            tts_model_id = voice_result.get('tts_model_id')
+            tts_config = None
+            if tts_model_id:
+                cursor.execute("SELECT config_json FROM ai_model_config WHERE id = %s", (tts_model_id,))
+                model_config_result = cursor.fetchone()
+                if model_config_result and model_config_result['config_json']:
+                    tts_config = model_config_result['config_json']
+                    if isinstance(tts_config, str):
+                        tts_config = json.loads(tts_config)
+            
             # 更新字段
             update_fields = []
             update_values = []
+            uploaded_voice_uri = None
+            
+            voice_name = data.get('name', voice_result.get('name'))
+            reference_text = data.get('referenceText', voice_result.get('reference_text', ''))
             
             if 'name' in data:
                 update_fields.append('name = %s')
@@ -1505,14 +1569,11 @@ class ElderCareAPI:
             
             # 处理音频文件更新
             if 'audio_file_path' in data:
-                import uuid
-                import shutil
-                
                 audio_file_path = data['audio_file_path']
                 if os.path.exists(audio_file_path):
                     # 生成新的文件名
                     file_extension = os.path.splitext(audio_file_path)[1] or '.webm'
-                    unique_filename = f"{uuid.uuid4().hex}{file_extension}"
+                    unique_filename = f"user_{user_id}_{uuid.uuid4().hex[:12]}{file_extension}"
                     
                     # 设置目标路径
                     voice_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'voices')
@@ -1520,17 +1581,54 @@ class ElderCareAPI:
                     target_path = os.path.join(voice_dir, unique_filename)
                     
                     # 删除旧文件
-                    if voice_result.get('reference_audio') and os.path.exists(voice_result['reference_audio']):
+                    old_audio_path = voice_result.get('reference_audio')
+                    if old_audio_path:
+                        # 处理相对路径
+                        if not os.path.isabs(old_audio_path):
+                            old_audio_path = os.path.join(os.path.dirname(__file__), '..', old_audio_path)
+                        if os.path.exists(old_audio_path):
+                            try:
+                                os.remove(old_audio_path)
+                            except:
+                                pass
+                    
+                    # 复制新文件（不是移动，以便后续上传）
+                    shutil.copy(audio_file_path, target_path)
+                    
+                    # 尝试上传音色到TTS服务
+                    if tts_config:
+                        tts_type = tts_config.get('type', '')
+                        # 检查是否支持音色上传（目前支持siliconflow）
+                        if tts_type in ['siliconflow', 'cosyvoice_siliconflow']:
+                            try:
+                                logger.info(f"正在上传更新的音色到硅基流动TTS服务: {voice_name}")
+                                tts_provider = create_tts_instance(tts_type, tts_config, delete_audio_file=True)
+                                upload_result = tts_provider.upload_voice(target_path, voice_name, reference_text)
+                                
+                                if upload_result.get('success'):
+                                    uploaded_voice_uri = upload_result.get('voice_id')
+                                    logger.info(f"音色上传成功，获得URI: {uploaded_voice_uri}")
+                                else:
+                                    logger.warning(f"音色上传失败: {upload_result.get('message')}")
+                            except Exception as upload_error:
+                                logger.error(f"音色上传异常: {upload_error}")
+                    
+                    # 使用相对路径存储
+                    relative_audio_path = f"data/voices/{unique_filename}"
+                    update_fields.append('reference_audio = %s')
+                    update_values.append(relative_audio_path)
+                    
+                    # 删除临时上传的文件
+                    if os.path.exists(audio_file_path) and audio_file_path != target_path:
                         try:
-                            os.remove(voice_result['reference_audio'])
+                            os.remove(audio_file_path)
                         except:
                             pass
-                    
-                    # 移动新文件
-                    shutil.move(audio_file_path, target_path)
-                    
-                    update_fields.append('reference_audio = %s')
-                    update_values.append(target_path)
+            
+            # 如果上传了新的音色URI，更新tts_voice字段
+            if uploaded_voice_uri:
+                update_fields.append('tts_voice = %s')
+                update_values.append(uploaded_voice_uri)
             
             if update_fields:
                 from datetime import datetime
@@ -1546,36 +1644,118 @@ class ElderCareAPI:
             cursor.close()
             conn.close()
             
-            return {"success": True, "message": "音色更新成功"}
+            message = "音色更新成功"
+            if uploaded_voice_uri:
+                message += "，已同步到TTS服务"
+            
+            return {"success": True, "message": message, "uploaded_to_tts": bool(uploaded_voice_uri)}
             
         except Exception as e:
             logger.error(f"更新音色失败: {e}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
             return {"success": False, "message": f"更新失败: {str(e)}"}
 
-    def test_voice_clone_with_agent(self, user_id: int, test_text: str) -> Dict[str, Any]:
-        """使用智能体配置测试声音合成"""
+    def test_voice_clone_with_agent(self, user_id: int, voice_id: str, test_text: str = None) -> Dict[str, Any]:
+        """使用指定音色测试声音合成，返回音频数据"""
         try:
-            # 获取用户智能体的TTS配置
-            agent_info = self.get_user_agent_info_sync(user_id)
+            import base64
+            import uuid
+            from core.utils.tts import create_instance as create_tts_instance
             
-            if not agent_info.get('success'):
-                return {"success": False, "message": "获取智能体信息失败"}
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
             
-            agent_data = agent_info.get('data', {})
-            tts_model_id = agent_data.get('tts_model_id', 'TTS_CosyVoiceClone302AI')
-            tts_voice_id = agent_data.get('tts_voice_id', 'TTS_CosyVoiceClone302AI0001')
+            # 获取指定的音色信息
+            cursor.execute("""
+                SELECT v.*, m.config_json as tts_config 
+                FROM ai_tts_voice v
+                LEFT JOIN ai_model_config m ON v.tts_model_id = m.id
+                WHERE v.id = %s
+            """, (voice_id,))
+            voice_result = cursor.fetchone()
             
-            # 这里应该调用实际的TTS服务，暂时返回模拟结果
-            return {
-                "success": True, 
-                "message": "声音测试完成",
-                "audio_url": f"/api/tts/test_audio_{user_id}_{int(datetime.now().timestamp())}.mp3",
-                "tts_model": tts_model_id,
-                "tts_voice": tts_voice_id,
-                "test_text": test_text
-            }
+            if not voice_result:
+                return {"success": False, "message": "找不到指定的音色"}
+            
+            # 解析TTS配置
+            tts_config = voice_result.get('tts_config')
+            if isinstance(tts_config, str):
+                tts_config = json.loads(tts_config)
+            
+            if not tts_config:
+                return {"success": False, "message": "TTS配置不存在"}
+            
+            # 获取tts_voice（上传后的URI）
+            tts_voice = voice_result.get('tts_voice', '')
+            
+            # 默认测试文本
+            test_text = '您好，这是一段语音合成测试。'
+            
+            cursor.close()
+            conn.close()
+            
+            # 创建TTS实例并生成音频
+            tts_type = tts_config.get('type', '')
+            logger.info(f"测试语音合成: type={tts_type}, voice={tts_voice}, text={test_text}")
+            
+            try:
+                import requests
+                
+                # 直接使用 requests 同步调用 TTS API（避免 asyncio 嵌套问题）
+                if tts_type in ['siliconflow', 'cosyvoice_siliconflow']:
+                    api_url = "https://api.siliconflow.cn/v1/audio/speech"
+                    access_token = tts_config.get('access_token', '')
+                    model = tts_config.get('model', 'FunAudioLLM/CosyVoice2-0.5B')
+                    response_format = tts_config.get('response_format', 'mp3')
+                    
+                    request_json = {
+                        "model": model,
+                        "input": test_text,
+                        "voice": tts_voice,
+                        "response_format": response_format,
+                    }
+                    headers = {
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                    }
+                    
+                    logger.info(f"调用硅基流动TTS API: model={model}, voice={tts_voice}")
+                    response = requests.post(api_url, json=request_json, headers=headers, timeout=60)
+                    
+                    if response.status_code == 200:
+                        audio_data = response.content
+                    else:
+                        logger.error(f"TTS API调用失败: {response.status_code} - {response.text}")
+                        return {"success": False, "message": f"TTS调用失败: {response.text}"}
+                else:
+                    return {"success": False, "message": f"不支持的TTS类型: {tts_type}"}
+                
+                if audio_data:
+                    # 转换为base64
+                    audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+                    
+                    return {
+                        "success": True, 
+                        "message": "语音合成成功",
+                        "audio_base64": audio_base64,
+                        "audio_format": response_format,
+                        "voice_name": voice_result.get('name'),
+                        "test_text": test_text
+                    }
+                else:
+                    return {"success": False, "message": "TTS生成无音频数据"}
+                    
+            except Exception as tts_error:
+                logger.error(f"TTS生成失败: {tts_error}")
+                import traceback
+                logger.error(f"TTS错误堆栈: {traceback.format_exc()}")
+                return {"success": False, "message": f"语音合成失败: {str(tts_error)}"}
+            
         except Exception as e:
             logger.error(f"测试声音合成错误: {e}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
             return {"success": False, "message": f"测试失败: {str(e)}"}
 
     def get_monitor_data_sync(self, user_id: int) -> Dict[str, Any]:
@@ -3283,6 +3463,60 @@ class ElderCareAPI:
         except Exception as e:
             logger.error(f"获取健康设备失败: {e}")
             return {"success": False, "message": f"获取健康设备失败: {str(e)}"}
+
+    def get_user_id_by_device(self, device_id: str) -> Dict[str, Any]:
+        """根据设备ID（MAC地址）获取用户ID"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 首先在ai_device表中查找设备
+            # device_id可能是MAC地址格式（如 3D:11:F1:48:6C:44）
+            cursor.execute("""
+                SELECT d.id, d.agent_id, d.mac_address, a.creator as user_id
+                FROM ai_device d
+                LEFT JOIN ai_agent a ON d.agent_id = a.id
+                WHERE d.id = %s OR d.mac_address = %s
+                LIMIT 1
+            """, (device_id, device_id))
+            
+            device_result = cursor.fetchone()
+            
+            if device_result and device_result.get('user_id'):
+                cursor.close()
+                conn.close()
+                return {
+                    "success": True, 
+                    "user_id": device_result['user_id'],
+                    "device_id": device_result['id'],
+                    "agent_id": device_result.get('agent_id')
+                }
+            
+            # 如果在ai_device中没找到，尝试在ec_health_devices中查找
+            cursor.execute("""
+                SELECT id, user_id, device_name, mac_address
+                FROM ec_health_devices
+                WHERE mac_address = %s AND is_active = 1
+                LIMIT 1
+            """, (device_id,))
+            
+            health_device = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if health_device and health_device.get('user_id'):
+                return {
+                    "success": True,
+                    "user_id": health_device['user_id'],
+                    "device_id": health_device['id']
+                }
+            
+            return {"success": False, "message": "未找到设备记录"}
+            
+        except Exception as e:
+            logger.error(f"根据设备ID获取用户失败: {e}")
+            return {"success": False, "message": f"查询失败: {str(e)}"}
 
     def get_user_devices(self, user_id: int) -> Dict[str, Any]:
         """获取用户的所有设备（AI设备 + 健康设备）"""

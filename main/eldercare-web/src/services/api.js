@@ -1071,6 +1071,20 @@ class ElderCareAPI {
   }
 
   /**
+   * 测试语音合成 - 使用指定音色生成测试音频
+   */
+  async testVoiceSynthesis(userId, voiceId, testText = '') {
+    return this.request('/voice/test', {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        voice_id: voiceId,
+        test_text: testText
+      })
+    });
+  }
+
+  /**
    * 健康提醒
    */
   async createHealthReminder(reminder) {

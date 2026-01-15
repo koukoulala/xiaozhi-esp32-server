@@ -15,7 +15,8 @@ import {
   RefreshCw,
   AlertTriangle,
   Wifi,
-  WifiOff
+  WifiOff,
+  CheckCircle
 } from 'lucide-react';
 import ElderCareAPI from '../services/api.js';
 
