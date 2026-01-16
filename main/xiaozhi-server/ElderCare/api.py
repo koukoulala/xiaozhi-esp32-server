@@ -567,6 +567,129 @@ class ElderCareAPI:
             logger.error(f"ElderCare用户登录错误: {e}")
             return {"success": False, "message": f"登录失败: {str(e)}"}
     
+    def get_user_info(self, user_id: int) -> Dict[str, Any]:
+        """获取用户详细信息"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            sql = """
+            SELECT id, username, real_name, phone, email, 
+                   elder_name, elder_relation, elder_profile,
+                   family_contacts, default_ai_agent_id, permission_level,
+                   create_date, update_date
+            FROM ec_users 
+            WHERE id = %s AND status = 1
+            """
+            cursor.execute(sql, (user_id,))
+            user = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if not user:
+                return {"success": False, "message": "用户不存在"}
+            
+            # 格式化日期字段
+            if user.get('create_date'):
+                user['create_date'] = user['create_date'].isoformat()
+            if user.get('update_date'):
+                user['update_date'] = user['update_date'].isoformat()
+            
+            return {"success": True, "data": user}
+            
+        except Exception as e:
+            logger.error(f"获取用户信息错误: {e}")
+            return {"success": False, "message": f"获取失败: {str(e)}"}
+    
+    def update_user_info(self, user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        """更新用户信息"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 构建更新字段
+            update_fields = []
+            update_values = []
+            
+            # 可更新的字段映射
+            allowed_fields = {
+                'real_name': 'real_name',
+                'phone': 'phone', 
+                'email': 'email',
+                'elder_name': 'elder_name',
+                'elder_relation': 'elder_relation',
+                'elder_profile': 'elder_profile',
+                'family_contacts': 'family_contacts'
+            }
+            
+            for field_key, db_field in allowed_fields.items():
+                if field_key in data:
+                    update_fields.append(f"{db_field} = %s")
+                    update_values.append(data[field_key])
+            
+            if not update_fields:
+                return {"success": False, "message": "没有可更新的字段"}
+            
+            # 添加更新时间
+            update_fields.append("update_date = NOW()")
+            
+            # 执行更新
+            sql = f"UPDATE ec_users SET {', '.join(update_fields)} WHERE id = %s"
+            update_values.append(user_id)
+            
+            cursor.execute(sql, tuple(update_values))
+            conn.commit()
+            
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "message": "用户信息更新成功"}
+            
+        except Exception as e:
+            logger.error(f"更新用户信息错误: {e}")
+            return {"success": False, "message": f"更新失败: {str(e)}"}
+    
+    def change_password(self, user_id: int, current_password: str, new_password: str) -> Dict[str, Any]:
+        """修改用户密码"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(dictionary=True)
+            
+            # 获取当前密码
+            cursor.execute("SELECT password FROM ec_users WHERE id = %s AND status = 1", (user_id,))
+            user = cursor.fetchone()
+            
+            if not user:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "用户不存在"}
+            
+            # 验证当前密码
+            if not bcrypt.checkpw(current_password.encode('utf-8'), user['password'].encode('utf-8')):
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "当前密码错误"}
+            
+            # 加密新密码
+            hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+            
+            # 更新密码
+            cursor.execute(
+                "UPDATE ec_users SET password = %s, update_date = NOW() WHERE id = %s",
+                (hashed_password.decode('utf-8'), user_id)
+            )
+            conn.commit()
+            
+            cursor.close()
+            conn.close()
+            
+            return {"success": True, "message": "密码修改成功"}
+            
+        except Exception as e:
+            logger.error(f"修改密码错误: {e}")
+            return {"success": False, "message": f"修改失败: {str(e)}"}
+    
     async def get_user_agent_info(self, user_id: int) -> Dict[str, Any]:
         """获取用户的AI智能体信息（更新版，支持多个智能体）"""
         try:
@@ -1807,42 +1930,42 @@ class ElderCareAPI:
             logger.error(f"创建健康提醒错误: {e}")
             return {"success": False, "message": f"创建失败: {str(e)}"}
 
-    # =========================== 智能提醒管理（集成TTS声音克隆）===========================
+    # =========================== 智能提醒管理 ===========================
     
     async def create_reminder_with_voice(self, reminder_data: Dict[str, Any]) -> Dict[str, Any]:
-        """创建智能提醒（支持指定TTS声音克隆）"""
+        """创建智能提醒（异步版本）"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
-            
-            # 如果没有指定TTS声音，使用用户的默认声音
-            if not reminder_data.get('tts_voice_id'):
-                user_agent_info = await self.get_user_agent_info(reminder_data['user_id'])
-                if user_agent_info.get('success'):
-                    reminder_data['tts_voice_id'] = user_agent_info['data'].get('tts_voice_id')
-            
-            sql = """
-            INSERT INTO ec_reminders (
-                user_id, ai_agent_id, ai_device_id, tts_voice_id, reminder_type, title, content, voice_prompt,
-                scheduled_time, repeat_pattern, repeat_config, tts_enabled, priority, is_completed, status, 
-                create_date, update_date
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, 'active', NOW(), NOW())
-            """
             
             # 处理时间格式
             scheduled_time = reminder_data.get('scheduled_time')
             if isinstance(scheduled_time, str):
                 scheduled_time = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
             
+            # voice_prompt 由前端根据提醒内容自动生成
+            voice_prompt = reminder_data.get('voice_prompt', '')
+            if not voice_prompt:
+                voice_prompt = self._generate_voice_prompt(
+                    reminder_data.get('reminder_type', 'other'),
+                    reminder_data.get('title', ''),
+                    reminder_data.get('content', '')
+                )
+            
+            sql = """
+            INSERT INTO ec_reminders (
+                user_id, reminder_type, title, content, voice_prompt,
+                scheduled_time, repeat_pattern, repeat_config, tts_enabled, priority, 
+                is_completed, status, create_date, update_date
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, 'active', NOW(), NOW())
+            """
+            
             cursor.execute(sql, (
                 reminder_data['user_id'],
-                reminder_data.get('ai_agent_id'),
-                reminder_data.get('ai_device_id'),
-                reminder_data.get('tts_voice_id'),
                 reminder_data['reminder_type'],
                 reminder_data['title'],
                 reminder_data.get('content', ''),
-                reminder_data.get('voice_prompt', ''),  # 专门的语音提醒内容
+                voice_prompt,
                 scheduled_time,
                 reminder_data.get('repeat_pattern', 'once'),
                 json.dumps(reminder_data.get('repeat_config', {}), ensure_ascii=False),
@@ -1857,7 +1980,8 @@ class ElderCareAPI:
             return {
                 "success": True, 
                 "message": "智能提醒创建成功", 
-                "reminder_id": reminder_id
+                "reminder_id": reminder_id,
+                "voice_prompt": voice_prompt
             }
             
         except Exception as e:
@@ -1865,7 +1989,7 @@ class ElderCareAPI:
             return {"success": False, "message": f"创建失败: {str(e)}"}
     
     async def get_user_reminders_with_voice(self, user_id: int, status: str = None, limit: int = 50) -> Dict[str, Any]:
-        """获取用户提醒列表（包含TTS声音信息）"""
+        """获取用户提醒列表"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
@@ -1879,14 +2003,8 @@ class ElderCareAPI:
                 where_conditions.append("r.is_completed = 1")
             
             sql = f"""
-            SELECT r.*, a.agent_name, d.alias as device_name,
-                   v.name as tts_voice_name, v.tts_voice as voice_code,
-                   tm.model_name as tts_model_name
+            SELECT r.*
             FROM ec_reminders r
-            LEFT JOIN ai_agent a ON r.ai_agent_id = a.id
-            LEFT JOIN ai_device d ON r.ai_device_id = d.id
-            LEFT JOIN ai_tts_voice v ON r.tts_voice_id = v.id
-            LEFT JOIN ai_model_config tm ON v.tts_model_id = tm.id
             WHERE {' AND '.join(where_conditions)}
             ORDER BY r.scheduled_time ASC, r.priority DESC
             LIMIT %s
@@ -1928,17 +2046,17 @@ class ElderCareAPI:
             conn = self.get_connection()
             cursor = conn.cursor(dictionary=True)
             
-            # 获取指定天数内的提醒
+            # 获取指定天数内的提醒（包括已完成的）
             sql = """
             SELECT 
-                id, user_id, ai_agent_id, reminder_type, title, content,
+                id, user_id, reminder_type, title, content, voice_prompt,
                 scheduled_time, repeat_pattern, priority, is_completed, status,
                 create_date
             FROM ec_reminders 
             WHERE user_id = %s 
             AND scheduled_time >= DATE_SUB(NOW(), INTERVAL %s DAY)
-            AND status = 'active'
-            ORDER BY scheduled_time ASC
+            AND status IN ('active', 'completed')
+            ORDER BY is_completed ASC, scheduled_time ASC
             LIMIT 50
             """
             
@@ -2039,7 +2157,9 @@ class ElderCareAPI:
         """创建提醒（同步版本，兼容路由调用）"""
         try:
             conn = self.get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(dictionary=True)
+            
+            user_id = reminder_data.get('user_id')
             
             # 处理时间格式
             scheduled_time = reminder_data.get('scheduled_time')
@@ -2052,40 +2172,96 @@ class ElderCareAPI:
             elif scheduled_time is None:
                 return {"success": False, "message": "必须提供提醒时间"}
 
+            # 处理repeat_config
+            repeat_config = reminder_data.get('repeat_config', {})
+            if isinstance(repeat_config, dict):
+                repeat_config = json.dumps(repeat_config, ensure_ascii=False)
+            elif repeat_config is None:
+                repeat_config = '{}'
+
+            # 处理repeat_pattern (前端可能传repeat_interval)
+            repeat_pattern = reminder_data.get('repeat_pattern') or reminder_data.get('repeat_interval', 'none')
+            if repeat_pattern == 'none':
+                repeat_pattern = 'once'
+            
+            # voice_prompt 由前端根据提醒内容自动生成，用户也可以修改
+            voice_prompt = reminder_data.get('voice_prompt', '')
+            
+            # 如果前端没有传voice_prompt，根据提醒内容自动生成
+            if not voice_prompt:
+                voice_prompt = self._generate_voice_prompt(
+                    reminder_data.get('reminder_type', 'other'),
+                    reminder_data.get('title', ''),
+                    reminder_data.get('content', '')
+                )
+
             sql = """
             INSERT INTO ec_reminders (
-                user_id, ai_agent_id, reminder_type, title, content, 
-                scheduled_time, repeat_pattern, priority, status, 
+                user_id, reminder_type, title, content, voice_prompt,
+                scheduled_time, repeat_pattern, repeat_config,
+                tts_enabled, priority, is_completed, status, 
                 create_date, update_date
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, 'active', NOW(), NOW())
             """
             
             cursor.execute(sql, (
-                reminder_data['user_id'],
-                reminder_data.get('ai_agent_id'),
+                user_id,
                 reminder_data.get('reminder_type', 'other'),
                 reminder_data['title'],
                 reminder_data.get('content', ''),
+                voice_prompt,
                 scheduled_time,
-                reminder_data.get('repeat_pattern', 'none'),
-                reminder_data.get('priority', 'medium'),
-                'active'
+                repeat_pattern,
+                repeat_config,
+                reminder_data.get('tts_enabled', 1),
+                reminder_data.get('priority', 'medium')
             ))
             
             reminder_id = cursor.lastrowid
             cursor.close()
             conn.close()
             
-            logger.info(f"创建提醒成功: ID={reminder_id}, 用户={reminder_data['user_id']}")
+            logger.info(f"创建提醒成功: ID={reminder_id}, 用户={user_id}")
             return {
                 "success": True, 
                 "message": "提醒创建成功", 
-                "reminder_id": reminder_id
+                "reminder_id": reminder_id,
+                "voice_prompt": voice_prompt  # 返回生成的语音文本供前端显示
             }
             
         except Exception as e:
             logger.error(f"创建提醒错误: {e}")
             return {"success": False, "message": f"创建失败: {str(e)}"}
+    
+    def _generate_voice_prompt(self, reminder_type: str, title: str, content: str) -> str:
+        """
+        根据提醒类型和内容自动生成语音播报文本
+        """
+        templates = {
+            'medication': "您好，现在是{title}时间了。{content}请记得按时服药，保持身体健康。",
+            'health_check': "您好，{title}的时间到了。{content}定期检查有助于了解您的身体状况。",
+            'exercise': "您好，是时候{title}了。{content}适当运动有益身心健康。",
+            'meal': "您好，{title}时间到了。{content}按时用餐很重要，祝您用餐愉快。",
+            'water': "您好，该喝水了。{content}保持充足的水分摄入对健康很重要。",
+            'rest': "您好，{title}时间到了。{content}充足的休息对身体恢复很重要。",
+            'appointment': "您好，提醒您{title}。{content}请做好准备，不要错过。",
+            'other': "您好，{title}。{content}"
+        }
+        
+        template = templates.get(reminder_type, templates['other'])
+        
+        # 处理内容
+        if content and content.strip():
+            content = content.strip()
+            if not content.endswith('。') and not content.endswith('！') and not content.endswith('？'):
+                content += '。'
+        else:
+            content = ''
+        
+        voice_text = template.format(title=title, content=content)
+        voice_text = voice_text.replace('。。', '。').replace('  ', ' ').strip()
+        
+        return voice_text
     
     def update_reminder(self, reminder_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
         """更新提醒"""
@@ -2097,7 +2273,7 @@ class ElderCareAPI:
             update_fields = []
             values = []
             
-            allowed_fields = ['title', 'content', 'scheduled_time', 'repeat_pattern', 'priority', 'is_completed', 'status']
+            allowed_fields = ['title', 'content', 'voice_prompt', 'reminder_type', 'scheduled_time', 'repeat_pattern', 'priority', 'is_completed', 'status']
             
             for field in allowed_fields:
                 if field in update_data:
@@ -2111,6 +2287,7 @@ class ElderCareAPI:
             sql = f"UPDATE ec_reminders SET {', '.join(update_fields)}, update_date = NOW() WHERE id = %s"
             
             cursor.execute(sql, values)
+            conn.commit()  # 确保提交事务
             
             if cursor.rowcount > 0:
                 cursor.close()
@@ -2124,6 +2301,82 @@ class ElderCareAPI:
         except Exception as e:
             logger.error(f"更新提醒错误: {e}")
             return {"success": False, "message": f"更新失败: {str(e)}"}
+    
+    def complete_reminder(self, reminder_id: int, is_completed: bool = True) -> Dict[str, Any]:
+        """
+        标记提醒完成状态（前端点击对号按钮调用）
+        
+        Args:
+            reminder_id: 提醒ID
+            is_completed: 是否完成，True=完成，False=取消完成
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if is_completed:
+                sql = """
+                UPDATE ec_reminders 
+                SET is_completed = 1, 
+                    completed_time = NOW(),
+                    status = 'completed',
+                    update_date = NOW() 
+                WHERE id = %s
+                """
+            else:
+                sql = """
+                UPDATE ec_reminders 
+                SET is_completed = 0, 
+                    completed_time = NULL,
+                    status = 'active',
+                    update_date = NOW() 
+                WHERE id = %s
+                """
+            
+            cursor.execute(sql, (reminder_id,))
+            conn.commit()  # 确保提交事务
+            
+            if cursor.rowcount > 0:
+                cursor.close()
+                conn.close()
+                action = "已完成" if is_completed else "已恢复"
+                logger.info(f"提醒 #{reminder_id} {action}")
+                return {"success": True, "message": f"提醒{action}"}
+            else:
+                cursor.close()
+                conn.close()
+                return {"success": False, "message": "提醒不存在"}
+                
+        except Exception as e:
+            logger.error(f"更新提醒完成状态错误: {e}")
+            return {"success": False, "message": f"操作失败: {str(e)}"}
+    
+    def mark_reminder_triggered(self, reminder_id: int) -> Dict[str, Any]:
+        """
+        标记提醒已触发（调度器播报后调用）
+        更新last_triggered_time和snooze_count
+        """
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            sql = """
+            UPDATE ec_reminders 
+            SET last_triggered_time = NOW(),
+                snooze_count = snooze_count + 1,
+                update_date = NOW() 
+            WHERE id = %s
+            """
+            
+            cursor.execute(sql, (reminder_id,))
+            cursor.close()
+            conn.close()
+            
+            return {"success": True}
+                
+        except Exception as e:
+            logger.error(f"标记提醒已触发错误: {e}")
+            return {"success": False, "message": str(e)}
     
     def delete_reminder(self, reminder_id: int, user_id: int = None) -> Dict[str, Any]:
         """删除提醒"""

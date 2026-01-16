@@ -1094,6 +1094,23 @@ class ElderCareAPI {
     });
   }
 
+  /**
+   * 生成语音播报内容
+   * @param {string} reminderType - 提醒类型
+   * @param {string} title - 提醒标题
+   * @param {string} content - 提醒内容
+   */
+  async generateVoicePrompt(reminderType, title, content) {
+    return this.request('/reminder/generate-voice-prompt', {
+      method: 'POST',
+      body: JSON.stringify({
+        reminder_type: reminderType,
+        title: title,
+        content: content
+      })
+    });
+  }
+
   async getHealthReminders(userId) {
     return this.request(`/reminders?user_id=${userId}`);
   }
@@ -1103,6 +1120,40 @@ class ElderCareAPI {
    */
   async get_reminders(userId) {
     return this.request(`/reminders?user_id=${userId}`);
+  }
+
+  /**
+   * 更新提醒完成状态
+   * @param {number} reminderId - 提醒ID
+   * @param {boolean} isCompleted - 是否完成
+   */
+  async updateReminderStatus(reminderId, isCompleted) {
+    return this.request(`/reminder/update-status/${reminderId}`, {
+      method: 'POST',
+      body: JSON.stringify({ is_completed: isCompleted })
+    });
+  }
+
+  /**
+   * 更新提醒内容
+   * @param {number} reminderId - 提醒ID
+   * @param {object} reminderData - 提醒数据
+   */
+  async updateReminder(reminderId, reminderData) {
+    return this.request(`/reminder/update/${reminderId}`, {
+      method: 'POST',
+      body: JSON.stringify(reminderData)
+    });
+  }
+
+  /**
+   * 删除提醒
+   * @param {number} reminderId - 提醒ID
+   */
+  async deleteReminder(reminderId) {
+    return this.request(`/reminder/delete/${reminderId}`, {
+      method: 'DELETE'
+    });
   }
 
   /**
@@ -1165,6 +1216,38 @@ class ElderCareAPI {
     return this.request('/emergency_call', {
       method: 'POST',
       body: JSON.stringify(emergency)
+    });
+  }
+
+  /**
+   * 获取用户详细信息
+   * @param {number} userId - 用户ID
+   */
+  async getUserInfo(userId) {
+    return this.request(`/user/info?user_id=${userId}`);
+  }
+
+  /**
+   * 更新用户信息
+   * @param {number} userId - 用户ID
+   * @param {Object} userData - 用户数据
+   */
+  async updateUserInfo(userId, userData) {
+    return this.request('/user/update', {
+      method: 'PUT',
+      body: JSON.stringify({ user_id: userId, ...userData })
+    });
+  }
+
+  /**
+   * 修改密码
+   * @param {number} userId - 用户ID
+   * @param {Object} passwordData - 密码数据 {current_password, new_password}
+   */
+  async changePassword(userId, passwordData) {
+    return this.request('/user/change_password', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, ...passwordData })
     });
   }
 

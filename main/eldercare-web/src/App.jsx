@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react'
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button.jsx'
-import { Badge } from '@/components/ui/badge.jsx'
 import { Card, CardContent } from '@/components/ui/card.jsx'
-import { Shield, Home, Activity, Calendar, Smartphone, Bot, Mic, Settings, UserCheck, AlertCircle } from 'lucide-react'
+import { Shield, Home, Activity, Calendar, Smartphone, Bot, Mic, AlertCircle, User } from 'lucide-react'
 import ElderCareAPI from './services/api.js'
 import UserRegistration from './components/UserRegistration.jsx'
 import UserLogin from './components/UserLogin.jsx'
@@ -15,38 +14,36 @@ import VoiceClone from './components/VoiceClone.jsx'
 import AgentManagement from './components/AgentManagement.jsx'
 import DeviceManagement from './components/DeviceManagement.jsx'
 import Reminders from './components/Reminders.jsx'
-
-// 高级页面组件
-import SystemDiagnostic from './pages/SystemDiagnostic.jsx'
-import DemoAccountValidator from './pages/DemoAccountValidator.jsx'
+import UserSettings from './components/UserSettings.jsx'
 
 import './App.css'
 
 // 导航组件
-function Navigation({ currentUser, onLogout, systemStatus }) {
+function Navigation({ currentUser, onLogout }) {
   const navigate = useNavigate()
   const location = useLocation()
   
   const isActive = (path) => location.pathname === path
-  
-  // 检查是否是演示账户（用户ID 1、2或coco用户）
-  const isDemoAccount = currentUser && 
-    (currentUser.id === 1 || currentUser.id === 2 || 
-     currentUser.username === 'coco' || currentUser.real_name === 'coco' ||
-     currentUser.username === '张三' || currentUser.username === '王美' || 
-     currentUser.real_name === '张三' || currentUser.real_name === '王美')
 
   return (
     <div className="w-64 border-r bg-muted/40 min-h-[calc(100vh-4rem)]">
       <div className="p-4">
         <nav className="space-y-2">
           <Button
-            variant={isActive('/dashboard') ? 'default' : 'ghost'}
+            variant={isActive('/agents') ? 'default' : 'ghost'}
             className="w-full justify-start mb-1"
-            onClick={() => navigate('/dashboard')}
+            onClick={() => navigate('/agents')}
           >
-            <Home className="h-4 w-4 mr-2" />
-            监控面板
+            <Bot className="h-4 w-4 mr-2" />
+            智能体管理
+          </Button>
+          <Button
+            variant={isActive('/voice') ? 'default' : 'ghost'}
+            className="w-full justify-start mb-1"
+            onClick={() => navigate('/voice')}
+          >
+            <Mic className="h-4 w-4 mr-2" />
+            声音克隆
           </Button>
           <Button
             variant={isActive('/health') ? 'default' : 'ghost'}
@@ -73,43 +70,13 @@ function Navigation({ currentUser, onLogout, systemStatus }) {
             设备管理
           </Button>
           <Button
-            variant={isActive('/agents') ? 'default' : 'ghost'}
+            variant={isActive('/dashboard') ? 'default' : 'ghost'}
             className="w-full justify-start mb-1"
-            onClick={() => navigate('/agents')}
+            onClick={() => navigate('/dashboard')}
           >
-            <Bot className="h-4 w-4 mr-2" />
-            智能体管理
+            <Home className="h-4 w-4 mr-2" />
+            监控面板
           </Button>
-          <Button
-            variant={isActive('/voice') ? 'default' : 'ghost'}
-            className="w-full justify-start mb-1"
-            onClick={() => navigate('/voice')}
-          >
-            <Mic className="h-4 w-4 mr-2" />
-            声音克隆
-          </Button>
-          
-          {/* 只对演示账户显示调试功能 */}
-          {isDemoAccount && (
-            <>
-              <Button
-                variant={isActive('/diagnostic') ? 'default' : 'ghost'}
-                className="w-full justify-start mb-1"
-                onClick={() => navigate('/diagnostic')}
-              >
-                <Settings className="h-4 w-4 mr-2" />
-                系统诊断
-              </Button>
-              <Button
-                variant={isActive('/demo-validator') ? 'default' : 'ghost'}
-                className="w-full justify-start mb-1"
-                onClick={() => navigate('/demo-validator')}
-              >
-                <UserCheck className="h-4 w-4 mr-2" />
-                演示账户验证
-              </Button>
-            </>
-          )}
         </nav>
       </div>
     </div>
@@ -119,7 +86,6 @@ function Navigation({ currentUser, onLogout, systemStatus }) {
 // 主应用内容组件
 function AppContent() {
   const [currentUser, setCurrentUser] = useState(null)
-  const [systemStatus, setSystemStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [initialLoad, setInitialLoad] = useState(true) // 新增：跟踪初始加载
   const [showDeviceBindingPrompt, setShowDeviceBindingPrompt] = useState(false)
@@ -129,14 +95,6 @@ function AppContent() {
   useEffect(() => {
     // 只在初始加载时执行
     if (!initialLoad) return;
-    
-    // 获取系统状态
-    try {
-      const status = ElderCareAPI.getSystemStatus()
-      setSystemStatus(status)
-    } catch (error) {
-      console.error('Failed to get system status:', error)
-    }
 
     // 检查是否有已登录用户
     const user = ElderCareAPI.getCurrentUser()
@@ -155,10 +113,10 @@ function AppContent() {
     
     if (isLoggedIn) {
       setCurrentUser(user)
-      // 如果在登录/注册页面，重定向到dashboard
+      // 如果在登录/注册页面，重定向到智能体管理
       if (location.pathname === '/login' || location.pathname === '/register' || location.pathname === '/') {
-        console.log('用户已登录，重定向到dashboard')
-        navigate('/dashboard')
+        console.log('用户已登录，重定向到agents')
+        navigate('/agents')
       }
     } else {
       // 清除无效数据
@@ -203,9 +161,9 @@ function AppContent() {
       localStorage.setItem('eldercare_token', userData.token)
     }
     
-    console.log('执行登录成功后的导航到dashboard')
+    console.log('执行登录成功后的导航到agents')
     // 直接导航，不再依赖useEffect
-    navigate('/dashboard')
+    navigate('/agents')
     
     // 如果需要设备绑定，显示提示框
     if (needsDeviceBinding) {
@@ -245,9 +203,9 @@ function AppContent() {
     localStorage.setItem('eldercare_user', JSON.stringify(user))
     localStorage.setItem('eldercare_token', user.token)
     
-    // 延迟导航
+    // 延迟导航到智能体管理
     setTimeout(() => {
-      navigate('/dashboard')
+      navigate('/agents')
     }, 100)
     
     // 检查是否有AI设备绑定（注册后应该没有设备，需要提示用户绑定）
@@ -280,25 +238,8 @@ function AppContent() {
     navigate('/login')
   }
 
-  const getStatusColor = () => {
-    if (!systemStatus) return 'outline'
-    switch (systemStatus.backend_mode) {
-      case 'real': return 'default'
-      case 'manager': return 'secondary'
-      case 'mock': return 'destructive'
-      default: return 'outline'
-    }
-  }
-
-  const getStatusText = () => {
-    if (!systemStatus) return '系统加载中'
-    switch (systemStatus.backend_mode) {
-      case 'real': return 'xiaozhi-server已连接'
-      case 'manager': return '管理后端已连接'
-      case 'mock': return '模拟数据模式'
-      default: return '系统状态未知'
-    }
-  }
+  // 用户设置弹窗状态
+  const [showUserSettings, setShowUserSettings] = useState(false)
 
   if (loading) {
     return (
@@ -348,9 +289,6 @@ function AppContent() {
           <div className="flex items-center space-x-2">
             <Shield className="h-6 w-6 text-primary" />
             <h1 className="text-xl font-semibold">智慧养老陪伴系统</h1>
-            <Badge variant={getStatusColor()} className="ml-2">
-              {getStatusText()}
-            </Badge>
           </div>
           <div className="ml-auto flex items-center space-x-4">
             {currentUser && (
@@ -358,6 +296,15 @@ function AppContent() {
                 <span className="text-sm text-muted-foreground">
                   欢迎，{currentUser.realName || currentUser.username}
                 </span>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setShowUserSettings(true)}
+                  className="flex items-center"
+                >
+                  <User className="h-4 w-4 mr-1" />
+                  设置
+                </Button>
                 <Button variant="ghost" size="sm" onClick={handleLogout}>
                   注销
                 </Button>
@@ -371,7 +318,6 @@ function AppContent() {
         <Navigation 
           currentUser={currentUser} 
           onLogout={handleLogout}
-          systemStatus={systemStatus}
         />
         <div className="flex-1 p-6">
           <Routes>
@@ -380,18 +326,16 @@ function AppContent() {
               <Route path="*" element={<Navigate to="/login" replace />} />
             ) : (
               <>
-                {/* 默认重定向 */}
-                <Route path="/" element={<Dashboard />} />
+                {/* 默认重定向到智能体管理 */}
+                <Route path="/" element={<AgentManagement />} />
                 
                 {/* 基础功能 */}
-                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/agents" element={<AgentManagement />} />
+                <Route path="/voice" element={<VoiceClone />} />
                 <Route path="/health" element={<HealthMonitor />} />
                 <Route path="/reminders" element={<Reminders />} />
-                <Route path="/voice" element={<VoiceClone />} />
                 <Route path="/devices" element={<DeviceManagement />} />
-                <Route path="/agents" element={<AgentManagement />} />
-                <Route path="/diagnostic" element={<SystemDiagnostic />} />
-                <Route path="/demo-validator" element={<DemoAccountValidator />} />
+                <Route path="/dashboard" element={<Dashboard />} />
               </>
             )}
           </Routes>
@@ -435,6 +379,18 @@ function AppContent() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {/* 用户设置弹窗 */}
+      {showUserSettings && (
+        <UserSettings 
+          currentUser={currentUser}
+          onClose={() => setShowUserSettings(false)}
+          onUserUpdated={(updatedUser) => {
+            setCurrentUser(updatedUser)
+            localStorage.setItem('eldercare_user', JSON.stringify(updatedUser))
+          }}
+        />
       )}
     </div>
   )

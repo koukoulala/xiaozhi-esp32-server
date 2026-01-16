@@ -278,6 +278,58 @@ async def get_user_info_handler(request: Request) -> Response:
     except Exception as e:
         return web.json_response({'success': False, 'message': str(e)})
 
+async def update_user_info_handler(request: Request) -> Response:
+    """更新用户信息"""
+    # 处理CORS预检请求
+    if request.method == 'OPTIONS':
+        return web.json_response({})
+    
+    try:
+        data = await request.json()
+        user_id = int(data.get('user_id', 0))
+        
+        if not user_id:
+            return web.json_response({'success': False, 'message': '用户ID不能为空'})
+        
+        eldercare_api = get_eldercare_api()
+        if not eldercare_api:
+            return web.json_response({'success': False, 'message': 'ElderCare API未初始化'})
+        
+        result = eldercare_api.update_user_info(user_id, data)
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({'success': False, 'message': str(e)})
+
+async def change_password_handler(request: Request) -> Response:
+    """修改用户密码"""
+    # 处理CORS预检请求
+    if request.method == 'OPTIONS':
+        return web.json_response({})
+    
+    try:
+        data = await request.json()
+        user_id = int(data.get('user_id', 0))
+        current_password = data.get('current_password', '')
+        new_password = data.get('new_password', '')
+        
+        if not user_id:
+            return web.json_response({'success': False, 'message': '用户ID不能为空'})
+        if not current_password:
+            return web.json_response({'success': False, 'message': '请输入当前密码'})
+        if not new_password:
+            return web.json_response({'success': False, 'message': '请输入新密码'})
+        if len(new_password) < 6:
+            return web.json_response({'success': False, 'message': '新密码长度至少6位'})
+        
+        eldercare_api = get_eldercare_api()
+        if not eldercare_api:
+            return web.json_response({'success': False, 'message': 'ElderCare API未初始化'})
+        
+        result = eldercare_api.change_password(user_id, current_password, new_password)
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({'success': False, 'message': str(e)})
+
 async def get_health_data_handler(request: Request) -> Response:
     """获取健康数据"""
     try:
@@ -641,6 +693,28 @@ async def update_voice_handler(request: Request) -> Response:
 
 # =========================== 提醒管理API ===========================
 
+async def generate_voice_prompt_handler(request: Request) -> Response:
+    """根据提醒类型和内容自动生成语音播报文本（供前端实时预览）"""
+    try:
+        data = await request.json()
+        reminder_type = data.get('reminder_type', 'other')
+        title = data.get('title', '')
+        content = data.get('content', '')
+        
+        eldercare_api = get_eldercare_api()
+        if not eldercare_api:
+            return web.json_response({'success': False, 'message': 'ElderCare API未初始化'})
+        
+        voice_prompt = eldercare_api._generate_voice_prompt(reminder_type, title, content)
+        return web.json_response({
+            'success': True, 
+            'data': {
+                'voice_prompt': voice_prompt
+            }
+        })
+    except Exception as e:
+        return web.json_response({'success': False, 'message': str(e)})
+
 async def create_reminder_handler(request: Request) -> Response:
     """创建提醒（匹配前端createHealthReminder调用）"""
     try:
@@ -695,6 +769,22 @@ async def delete_reminder_handler(request: Request) -> Response:
             return web.json_response({'success': False, 'message': 'ElderCare API未初始化'})
         
         result = eldercare_api.delete_reminder(reminder_id, user_id)
+        return web.json_response(result)
+    except Exception as e:
+        return web.json_response({'success': False, 'message': str(e)})
+
+async def update_reminder_status_handler(request: Request) -> Response:
+    """更新提醒完成状态（前端点击对号按钮调用）"""
+    try:
+        reminder_id = int(request.match_info['reminder_id'])
+        data = await request.json()
+        is_completed = data.get('is_completed', True)
+        
+        eldercare_api = get_eldercare_api()
+        if not eldercare_api:
+            return web.json_response({'success': False, 'message': 'ElderCare API未初始化'})
+        
+        result = eldercare_api.complete_reminder(reminder_id, is_completed)
         return web.json_response(result)
     except Exception as e:
         return web.json_response({'success': False, 'message': str(e)})
@@ -894,15 +984,23 @@ def setup_eldercare_routes(app: web.Application):
     app.router.add_post('/eldercare/reminder/create', create_health_reminder_handler)  # 别名
     app.router.add_post('/eldercare/reminder/update/{reminder_id}', update_reminder_handler)
     app.router.add_delete('/eldercare/reminder/delete/{reminder_id}', delete_reminder_handler)
+    app.router.add_post('/eldercare/reminder/update-status/{reminder_id}', update_reminder_status_handler)  # 更新完成状态
+    app.router.add_post('/eldercare/reminder/generate-voice-prompt', generate_voice_prompt_handler)  # 生成语音文本
     
     # OPTIONS支持
     app.router.add_options('/eldercare/reminders', create_reminder_handler)
     app.router.add_options('/eldercare/reminder/create', create_health_reminder_handler)
     app.router.add_options('/eldercare/reminder/update/{reminder_id}', update_reminder_handler)
     app.router.add_options('/eldercare/reminder/delete/{reminder_id}', delete_reminder_handler)
+    app.router.add_options('/eldercare/reminder/update-status/{reminder_id}', update_reminder_status_handler)
+    app.router.add_options('/eldercare/reminder/generate-voice-prompt', generate_voice_prompt_handler)
     
     # =========================== 用户信息API ===========================
     app.router.add_get('/eldercare/user/info', get_user_info_handler)
+    app.router.add_put('/eldercare/user/update', update_user_info_handler)
+    app.router.add_post('/eldercare/user/change_password', change_password_handler)
+    app.router.add_options('/eldercare/user/update', update_user_info_handler)
+    app.router.add_options('/eldercare/user/change_password', change_password_handler)
     
     # =========================== 聊天对话API ===========================
     app.router.add_post('/eldercare/chat/response', get_chat_response_handler)

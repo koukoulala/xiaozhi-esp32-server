@@ -7,9 +7,23 @@ ElderCare智慧养老陪伴系统
 """
 
 from .api import ElderCareAPI, init_eldercare_api, get_eldercare_api
+from .reminder_scheduler import (
+    ReminderScheduler,
+    ConnectionManager,
+    get_connection_manager,
+    get_reminder_scheduler,
+    init_reminder_scheduler,
+    stop_reminder_scheduler
+)
 
 __all__ = [
     'ElderCareAPI',
     'init_eldercare_api', 
-    'get_eldercare_api'
+    'get_eldercare_api',
+    'ReminderScheduler',
+    'ConnectionManager',
+    'get_connection_manager',
+    'get_reminder_scheduler',
+    'init_reminder_scheduler',
+    'stop_reminder_scheduler'
 ]

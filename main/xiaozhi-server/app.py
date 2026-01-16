@@ -71,8 +71,21 @@ async def main():
     try:
         init_eldercare_api(db_config)
         logger.bind(tag=TAG).info("ElderCare API初始化成功")
+        
+        # 启动ElderCare提醒调度器
+        try:
+            from ElderCare.reminder_scheduler import init_reminder_scheduler, stop_reminder_scheduler
+            from ElderCare.api import get_eldercare_api
+            eldercare_api = get_eldercare_api()
+            if eldercare_api:
+                await init_reminder_scheduler(eldercare_api, check_interval=60)
+                logger.bind(tag=TAG).info("ElderCare提醒调度器启动成功")
+        except Exception as scheduler_error:
+            logger.bind(tag=TAG).warning(f"ElderCare提醒调度器启动失败: {scheduler_error}")
+            stop_reminder_scheduler = None
     except Exception as e:
         logger.bind(tag=TAG).error(f"ElderCare API初始化失败: {e}")
+        stop_reminder_scheduler = None
 
     # auth_key优先级：配置文件server.auth_key > manager-api.secret > 自动生成
     # auth_key用于jwt认证，比如视觉分析接口的jwt认证、ota接口的token生成与websocket认证
@@ -154,6 +167,14 @@ async def main():
     except asyncio.CancelledError:
         print("任务被取消，清理资源中...")
     finally:
+        # 停止ElderCare提醒调度器
+        try:
+            if 'stop_reminder_scheduler' in dir() and stop_reminder_scheduler:
+                await stop_reminder_scheduler()
+                logger.bind(tag=TAG).info("ElderCare提醒调度器已停止")
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"停止提醒调度器失败: {e}")
+        
         # 停止全局GC管理器
         await gc_manager.stop()
 

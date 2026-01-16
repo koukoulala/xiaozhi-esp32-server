@@ -42,6 +42,13 @@ from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils import textUtils
 
+# ElderCare连接管理器（用于提醒调度）
+try:
+    from ElderCare.reminder_scheduler import get_connection_manager, get_reminder_scheduler
+except ImportError:
+    get_connection_manager = None
+    get_reminder_scheduler = None
+
 TAG = __name__
 
 auto_import_modules("plugins_func.functions")
@@ -208,6 +215,9 @@ class ConnectionHandler:
 
             # 初始化ElderCare用户ID
             await self.set_user_id_from_device()
+            
+            # 注册到全局连接管理器（用于提醒推送）
+            await self._register_to_connection_manager()
 
             # 初始化活动时间戳
             self.first_activity_time = time.time() * 1000
@@ -1205,6 +1215,9 @@ class ConnectionHandler:
     async def close(self, ws=None):
         """资源清理方法"""
         try:
+            # 从全局连接管理器注销
+            await self._unregister_from_connection_manager()
+            
             # 取消超时任务
             if self.timeout_task and not self.timeout_task.done():
                 self.timeout_task.cancel()
@@ -1512,6 +1525,52 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).error(f"设置用户ID错误: {e}")
             self.user_id = self.device_id  # fallback
     
+    async def _register_to_connection_manager(self):
+        """注册到全局连接管理器（用于提醒推送）"""
+        try:
+            if get_connection_manager is None:
+                return
+            
+            connection_manager = get_connection_manager()
+            if connection_manager and self.device_id:
+                # 转换user_id为int类型（如果是数字字符串）
+                user_id_int = None
+                if self.user_id:
+                    try:
+                        user_id_int = int(self.user_id) if isinstance(self.user_id, str) and self.user_id.isdigit() else self.user_id
+                    except (ValueError, TypeError):
+                        user_id_int = None
+                
+                connection_manager.register_connection(
+                    self.device_id, 
+                    self, 
+                    user_id_int
+                )
+                self.logger.bind(tag=TAG).info(f"设备 {self.device_id} 已注册到连接管理器")
+                
+                # 检查是否有待发送的提醒
+                if user_id_int and get_reminder_scheduler:
+                    scheduler = get_reminder_scheduler()
+                    if scheduler:
+                        asyncio.create_task(
+                            scheduler.check_pending_reminders_for_user(user_id_int, self)
+                        )
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"注册连接管理器错误: {e}")
+    
+    async def _unregister_from_connection_manager(self):
+        """从全局连接管理器注销"""
+        try:
+            if get_connection_manager is None:
+                return
+            
+            connection_manager = get_connection_manager()
+            if connection_manager and self.device_id:
+                connection_manager.unregister_connection(self.device_id)
+                self.logger.bind(tag=TAG).debug(f"设备 {self.device_id} 已从连接管理器注销")
+        except Exception as e:
+            self.logger.bind(tag=TAG).error(f"注销连接管理器错误: {e}")
+
     async def get_enhanced_prompt_with_context(self, original_prompt):
         """使用ElderCare上下文增强提示词"""
         if not self.eldercare_enabled:
